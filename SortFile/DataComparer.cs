@@ -1,11 +1,10 @@
-﻿using System;
-using System.Collections.Generic;
+﻿namespace DataSort.SortFile;
 
-namespace DataSort.GenerateFile;
+using Common;
 
-internal sealed class RowComparer : Comparer<ReadOnlyMemory<char>>
+internal sealed class DataComparer : Comparer<ReadOnlyMemory<char>>
 {
-  public static new RowComparer Default { get; } = new RowComparer();
+  public static new DataComparer Default { get; } = new DataComparer();
 
   public override int Compare(ReadOnlyMemory<char> x, ReadOnlyMemory<char> y) => Compare(x.Span, y.Span);
 
@@ -21,16 +20,13 @@ internal sealed class RowComparer : Comparer<ReadOnlyMemory<char>>
     return xnumber.CompareTo(ynumber);
   }
 
-  private const char NumberSeparator = '.';
-  private const int NumberSeparatorLength = 2; // ". ": NumberSeparator and Space
-
   private static ReadOnlySpan<char> GetText(ReadOnlySpan<char> value, out int delimeter) {
-    delimeter = value.IndexOf(NumberSeparator);
+    delimeter = value.IndexOf(DataDescription.TextSeparator, StringComparison.Ordinal);
     if(delimeter <= 0) {
-      throw new ArgumentException($"Number separator \"{NumberSeparator}\" not found in \"{value}\".", nameof(value));
+      throw new ArgumentException($"Number separator \"{DataDescription.TextSeparator}\" not found in \"{value}\".", nameof(value));
     }//if
 
-    return value[(delimeter + NumberSeparatorLength)..];
+    return value[(delimeter + DataDescription.TextSeparator.Length)..];
   }
 
   private static ulong GetNumber(ReadOnlySpan<char> value, int delimeter) => UInt64.Parse(value[..delimeter]);

@@ -1,164 +1,292 @@
-﻿using System;
-using System.Linq;
-using System.Buffers;
-using System.Collections.Generic;
+﻿using System.ComponentModel.DataAnnotations;
 using System.Diagnostics;
-using System.IO;
-using System.IO.Pipelines;
-using System.Net.Sockets;
-using System.Reflection.PortableExecutable;
-using System.Runtime.InteropServices;
 using System.Text;
-using System.Threading;
-using System.Threading.Channels;
-using System.Threading.Tasks;
-using System.Xml.Linq;
-using System.Reflection;
+using DataSort.Common;
 
-namespace DataSort.GenerateFile;
+using Microsoft.Extensions.Configuration;
+
+using Microsoft.Extensions.Logging;
+
+namespace DataSort.SortFile;
 
 internal static class App
 {
+  private const int SuccessExitCode = 0;
+  private const int InvalidArgsExitCode = -1;
+  private const int InvalidConfigurationExitCode = -2;
+  private const int FailedExitCode = -3;
+
+  private static void Usage() => Console.WriteLine($"Usage: {Path.GetFileNameWithoutExtension(Environment.ProcessPath)} --{nameof(SortFileOptions.FilePath)} \"<input file path>\" --{nameof(SortFileOptions.MaxReadLines)} <max read lines>");
+
   private static async Task<int> Main(string[] args) {
-    //await using var stream = new FileStream(@"d:\Develop\Temp\FileSort.txt", FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 0x_100_000, FileOptions.SequentialScan | FileOptions.Asynchronous);
+    using var builder = new AppBuilder(typeof(App), args);
 
-    //var totalItems = 0;
-    var stopwatch = Stopwatch.StartNew();
-
-    //Test();
-
-    var deleteFilesChannel = Channel.CreateUnbounded<string>(new UnboundedChannelOptions {
-      SingleReader = true,
-      SingleWriter = false,
-    });
-
-    var deleteFilesTask = Task.Run(async () => {
-      await foreach(var item in deleteFilesChannel.Reader.ReadAllAsync()) {
-        try {
-          File.Delete(item);
-        } catch(IOException ex) {
-          Console.WriteLine(ex.Message);
-        }//try
-      }//for
-    });
-
-    //await using var reader = new RowReading(@"d:\Develop\Temp\FileSort-10G.txt", Encoding.UTF8);
-    var context = new ProcessingContext {
-      SourceFilePath = @"d:\Develop\Temp\FileSort.txt",
-      //SourceFilePath = @"d:\Develop\Temp\FileSort-10G-release.txt",
-      WorkingDirectoryPath = @"d:\Develop\Temp\Sorting\",
-    };
-    context.EnsureWorkingDirectory();
-    Console.WriteLine($"Started operation {context.OperationId}");
-
-    var files = await SplitFileAsync(context);
-
-    stopwatch.Stop();
-    Console.WriteLine($"Created {files.Count:N0} files at {stopwatch.Elapsed}");
-    stopwatch.Start();
-
-    var iteration = 0;
-    while(files.Count > 1) {
-      var stopwatchIteration = Stopwatch.StartNew();
-
-      var mergedFiles = new List<string>();
-      foreach(var chunk in files.Chunk(size: 2)) {
-        if(chunk.Length is 2) {
-          var mergedFile = await MergeFilesAsync(context, chunk[0], chunk[1], iteration);
-          mergedFiles.Add(mergedFile);
-          await deleteFilesChannel.Writer.WriteAsync(chunk[0]);
-          await deleteFilesChannel.Writer.WriteAsync(chunk[1]);
-        } else {
-          mergedFiles.Add(chunk[0]);
-        }//if
-      }//for
-
-      files = mergedFiles;
-
-      stopwatchIteration.Stop();
-      Console.WriteLine($"Iteration {iteration:N0}: {files.Count:N0} files at {stopwatchIteration.Elapsed}");
-      iteration++;
-    }//while
-
-    deleteFilesChannel.Writer.Complete();
-    await deleteFilesTask;
-
-    stopwatch.Stop();
-    Console.WriteLine($"Completed at {stopwatch.Elapsed}, file name is \"{files.SingleOrDefault()}\"");
-
-    return 0;
-  }
-
-  private static async Task<string> MergeFilesAsync(ProcessingContext context, string leftFile, string rightFile, int iteration) {
-    ArgumentNullException.ThrowIfNull(context);
-
-    await using var leftStream = new FileStream(leftFile, FileMode.Open, FileAccess.Read, FileShare.None, bufferSize: 0x_100_000, FileOptions.SequentialScan | FileOptions.Asynchronous);
-    using var leftReader = new StreamReader(leftStream, context.Encoding);
-
-    await using var rightStream = new FileStream(rightFile, FileMode.Open, FileAccess.Read, FileShare.None, bufferSize: 0x_100_000, FileOptions.SequentialScan | FileOptions.Asynchronous);
-    using var rightReader = new StreamReader(rightStream, context.Encoding);
-
-    var outputFileName = context.GetNewFileName(iteration);
-    await using var outputStream = new FileStream(outputFileName, FileMode.CreateNew, FileAccess.Write, FileShare.None, bufferSize: 0x_100_000, FileOptions.Asynchronous);
-    using var outputWriter = new StreamWriter(outputStream, context.Encoding);
-
-    var leftLine = await leftReader.ReadLineAsync();
-    var rightLine = await rightReader.ReadLineAsync();
-
-    while(leftLine is not null && rightLine is not null) {
-      if(RowComparer.Compare(leftLine, rightLine) <= 0) {
-        await outputWriter.WriteLineAsync(leftLine);
-        leftLine = await leftReader.ReadLineAsync();
-      } else {
-        await outputWriter.WriteLineAsync(rightLine);
-        rightLine = await rightReader.ReadLineAsync();
+    var validateOptionsResult = builder.GetOptions(out var options);
+    if(validateOptionsResult is not SuccessExitCode) {
+      if(validateOptionsResult is InvalidArgsExitCode) {
+        Usage();
       }//if
-    }//while
 
-    while(leftLine is not null) {
-      await outputWriter.WriteLineAsync(leftLine);
-      leftLine = await leftReader.ReadLineAsync();
-    }//try
-
-    while(rightLine is not null) {
-      await outputWriter.WriteLineAsync(rightLine);
-      rightLine = await rightReader.ReadLineAsync();
-    }//try
-
-    return outputFileName;
-  }
-
-  private static async Task<IReadOnlyCollection<string>> SplitFileAsync(ProcessingContext context) {
-    ArgumentNullException.ThrowIfNull(context);
-
-    var data = new List<string>(100_000);
-    var files = new List<string>();
-
-    using var stream = new FileStream(context.SourceFilePath, FileMode.Open, FileAccess.Read, FileShare.None, bufferSize: 0x_100_000, FileOptions.SequentialScan | FileOptions.Asynchronous);
-    using var reader = new StreamReader(stream, context.Encoding);
-    while(await reader.ReadLineAsync() is { } line) {
-      data.Add(line);
-      if(data.Count == data.Capacity) {
-        var path = context.GetNewFileName();
-        files.Add(path);
-        await ProcessBufferAsync(context, data, path).ConfigureAwait(continueOnCapturedContext: false);
-      }//if
-    }//while
-
-    if(data.Any()) {
-      var path = context.GetNewFileName();
-      files.Add(path);
-      await ProcessBufferAsync(context, data, path).ConfigureAwait(continueOnCapturedContext: false);
+      return validateOptionsResult;
     }//if
 
-    return files;
+    try {
+      var operationId = Guid.NewGuid();
+      var encoding = Encoding.GetEncoding(options.File.EncodingName);
 
-    static async Task ProcessBufferAsync(ProcessingContext context, List<string> data, string filePath) {
-      data.Sort((left, right) => RowComparer.Compare(left, right));
-      await File.WriteAllLinesAsync(filePath, data, context.Encoding, context.CancellationToken).ConfigureAwait(continueOnCapturedContext: false);
-      data.Clear();
-    }
+      var workingDirectoryStart = String.IsNullOrEmpty(options.File.WorkingDirectory) ? Path.GetDirectoryName(options.FilePath) : options.File.WorkingDirectory;
+      var workingDirectory = Path.Combine(workingDirectoryStart ?? String.Empty, operationId.ToString("N"));
+      Console.WriteLine($"Sort file \"{Path.GetFileName(options.FilePath)}\" in directory \"{workingDirectory}\".");
+
+      var stopwatch = Stopwatch.StartNew();
+
+      var sorting = new FileSorting(options.FilePath, encoding, options.MaxReadLines, workingDirectory);
+      var filePath = await sorting.SortFileAsync(builder.Logger).ConfigureAwait(continueOnCapturedContext: false);
+
+      stopwatch.Stop();
+      Console.WriteLine($"File \"{Path.GetFileName(options.FilePath)}\" sorted as \"{Path.GetFileName(filePath)}\" in {stopwatch.Elapsed}.");
+    } catch(Exception ex) {
+      builder.Logger.LogError(ex, "Unhandled exception");
+      return FailedExitCode;
+    }//try
+
+    return SuccessExitCode;
   }
+
+  private static int GetOptions(this AppBuilder builder, out SortFileOptions options) {
+    options = builder.Configuration.Get<SortFileOptions>();
+
+    var validationResults = new List<ValidationResult>();
+
+    if(!Validator.TryValidateObject(options, new ValidationContext(options), validationResults, validateAllProperties: true)) {
+      builder.ReportErrors("Command Line", validationResults);
+      return InvalidArgsExitCode;
+    } else if(!Validator.TryValidateObject(options.File, new ValidationContext(options.File), validationResults, validateAllProperties: true)) {
+      builder.ReportErrors(nameof(options.File), validationResults);
+      return InvalidConfigurationExitCode;
+    }//if
+
+    return SuccessExitCode;
+  }
+
+  //private static async Task<string> MergeFilesAsync(ProcessingContext context, string leftFile, string rightFile) {
+  //  ArgumentNullException.ThrowIfNull(context);
+
+  //  await using var leftStream = new FileStream(leftFile, FileMode.Open, FileAccess.Read, FileShare.None, bufferSize: 0x_100_0000, FileOptions.SequentialScan | FileOptions.Asynchronous);
+  //  using var leftReader = new StreamReader(leftStream, context.Encoding);
+
+  //  await using var rightStream = new FileStream(rightFile, FileMode.Open, FileAccess.Read, FileShare.None, bufferSize: 0x_100_0000, FileOptions.SequentialScan | FileOptions.Asynchronous);
+  //  using var rightReader = new StreamReader(rightStream, context.Encoding);
+
+  //  var outputFileName = context.GetNewFileName();
+  //  //await using var outputStream = new FileStream(outputFileName, FileMode.CreateNew, FileAccess.Write, FileShare.None, bufferSize: 0x_10_0000, FileOptions.Asynchronous);
+  //  //using var outputWriter = new StreamWriter(outputStream, context.Encoding);
+  //  await using var saving = new FileSaving(outputFileName, context.MaxRowBufferSizeInBytes, context.Encoding, streamBufferSize: 0x_10_0000);
+  //  await saving.WritePreambleAsync(context.CancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+
+  //  var leftLine = await leftReader.ReadLineAsync();
+  //  var rightLine = await rightReader.ReadLineAsync();
+
+  //  while(leftLine is not null && rightLine is not null) {
+  //    if(DataComparer.Compare(leftLine, rightLine) <= 0) {
+  //      await saving.WriteDataAsync(leftLine.AsMemory(), context.CancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+  //      //      await outputWriter.WriteLineAsync(leftLine);
+  //      leftLine = await leftReader.ReadLineAsync();
+  //    } else {
+  //      //await outputWriter.WriteLineAsync(rightLine);
+  //      await saving.WriteDataAsync(rightLine.AsMemory(), context.CancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+  //      rightLine = await rightReader.ReadLineAsync();
+  //    }//if
+  //  }//while
+
+  //  while(leftLine is not null) {
+  //    //await outputWriter.WriteLineAsync(leftLine);
+  //    await saving.WriteDataAsync(leftLine.AsMemory(), context.CancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+  //    leftLine = await leftReader.ReadLineAsync();
+  //  }//try
+
+  //  while(rightLine is not null) {
+  //    //await outputWriter.WriteLineAsync(rightLine);
+  //    await saving.WriteDataAsync(rightLine.AsMemory(), context.CancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+  //    rightLine = await rightReader.ReadLineAsync();
+  //  }//try
+
+  //  return outputFileName;
+  //}
+
+  //private static async Task<string> MergeFilesAsync(ProcessingContext context, string leftFile, string rightFile) {
+  //  ArgumentNullException.ThrowIfNull(context);
+
+  //  await using var leftReading = new RowReading(leftFile, context.Encoding, readByOne: true);
+  //  var leftEnumerable = leftReading.ReadByRow(context.CancellationToken);
+  //  var leftEnumerator = leftEnumerable.GetAsyncEnumerator(context.CancellationToken);
+
+  //  await using var rightReading = new RowReading(rightFile, context.Encoding, readByOne: true);
+  //  var rightEnumerable = rightReading.ReadByRow(context.CancellationToken);
+  //  var rightEnumerator = rightEnumerable.GetAsyncEnumerator(context.CancellationToken);
+
+  //  var outputFileName = context.GetNewFileName();
+  //  await using var saving = new FileSaving(outputFileName, context.MaxRowBufferSizeInBytes, context.Encoding, streamBufferSize: 0x_100_000);
+  //  await saving.WritePreambleAsync(context.CancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+
+  //  var hasLeft = await leftEnumerator.MoveNextAsync().ConfigureAwait(continueOnCapturedContext: false);
+  //  var hasRight = await rightEnumerator.MoveNextAsync().ConfigureAwait(continueOnCapturedContext: false);
+
+  //  while(hasLeft && hasRight) {
+  //    if(RowComparer.Compare(leftEnumerator.Current, rightEnumerator.Current) <= 0) {
+  //      await saving.WriteDataAsync(leftEnumerator.Current.AsMemory(), context.CancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+  //      hasLeft = await leftEnumerator.MoveNextAsync().ConfigureAwait(continueOnCapturedContext: false);
+  //    } else {
+  //      await saving.WriteDataAsync(rightEnumerator.Current.AsMemory(), context.CancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+  //      hasRight = await rightEnumerator.MoveNextAsync().ConfigureAwait(continueOnCapturedContext: false);
+  //    }//if
+  //  }//while
+
+  //  if(hasLeft) {
+  //    do {
+  //      await saving.WriteDataAsync(leftEnumerator.Current.AsMemory(), context.CancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+  //    } while(await leftEnumerator.MoveNextAsync().ConfigureAwait(continueOnCapturedContext: false));
+  //  }//if
+
+  //  if(hasRight) {
+  //    do {
+  //      await saving.WriteDataAsync(rightEnumerator.Current.AsMemory(), context.CancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+  //    } while(await rightEnumerator.MoveNextAsync().ConfigureAwait(continueOnCapturedContext: false));
+  //  }//if
+
+  //  return outputFileName;
+  //}
+
+  //private static async Task<string> MergeFilesAsync(ProcessingContext context, string leftFile, string rightFile) {
+  //  ArgumentNullException.ThrowIfNull(context);
+
+  //  await using var leftStream = new FileStream(leftFile, FileMode.Open, FileAccess.Read, FileShare.None, bufferSize: 0x_100_0000, FileOptions.SequentialScan | FileOptions.Asynchronous);
+  //  using var leftReader = new StreamReader(leftStream, context.Encoding);
+
+  //  await using var rightStream = new FileStream(rightFile, FileMode.Open, FileAccess.Read, FileShare.None, bufferSize: 0x_100_0000, FileOptions.SequentialScan | FileOptions.Asynchronous);
+  //  using var rightReader = new StreamReader(rightStream, context.Encoding);
+
+  //  var outputFileName = context.GetNewFileName();
+  //  await using var outputStream = new FileStream(outputFileName, FileMode.CreateNew, FileAccess.Write, FileShare.None, bufferSize: 0x_10_0000, FileOptions.Asynchronous);
+  //  using var outputWriter = new StreamWriter(outputStream, context.Encoding);
+
+  //  var leftLine = await leftReader.ReadLineAsync();
+  //  var rightLine = await rightReader.ReadLineAsync();
+
+  //  while(leftLine is not null && rightLine is not null) {
+  //    if(RowComparer.Compare(leftLine, rightLine) <= 0) {
+  //      await outputWriter.WriteLineAsync(leftLine);
+  //      leftLine = await leftReader.ReadLineAsync();
+  //    } else {
+  //      await outputWriter.WriteLineAsync(rightLine);
+  //      rightLine = await rightReader.ReadLineAsync();
+  //    }//if
+  //  }//while
+
+  //  while(leftLine is not null) {
+  //    await outputWriter.WriteLineAsync(leftLine);
+  //    leftLine = await leftReader.ReadLineAsync();
+  //  }//try
+
+  //  while(rightLine is not null) {
+  //    await outputWriter.WriteLineAsync(rightLine);
+  //    rightLine = await rightReader.ReadLineAsync();
+  //  }//try
+
+  //  return outputFileName;
+  //}
+
+  ///////////////////////////////////////////////
+  //private static async Task<(int FileCount, int RowCount)> SplitFileAsync(ProcessingContext context, int chunkSize, ChannelWriter<string> writer) {
+  //  ArgumentNullException.ThrowIfNull(context);
+  //  ArgumentNullException.ThrowIfNull(writer);
+
+  //  var maxRowBufferSizeInBytes = context.Encoding.GetByteCount(DataDescription.MaxString);
+  //  var (fileCount, rowCount) = (0, 0);
+
+  //  await using var reading = new DataReading(context.SourceFilePath, context.Encoding);
+  //  await foreach(var item in reading.ReadLinesAsync(chunkSize, context.CancellationToken)) {
+  //    item.Sort((left, right) => DataComparer.Compare(left, right));
+
+  //    var path = context.GetNewFileName();
+  //    await using(var saving = new FileSaving(path, maxRowBufferSizeInBytes, context.Encoding, streamBufferSize: 0x_10_0000)) {
+  //      await saving.WritePreambleAsync(context.CancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+  //      foreach(var row in item) {
+  //        await saving.WriteDataAsync(row.AsMemory(), context.CancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+  //      }//for
+  //    }//using
+
+  //    Console.WriteLine($"Saved file {Path.GetFileNameWithoutExtension(path)}");
+  //    await writer.WriteAsync(path, context.CancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+
+  //    fileCount++;
+  //    rowCount += item.Count;
+  //  }//for
+
+  //  return (fileCount, rowCount);
+  //}
+  ///////////////////////////////////////////////
+
+  //private static async Task<(int FileCount, int RowCount)> SplitFileAsync(ProcessingContext context, ChannelWriter<string> writer) {
+  //  ArgumentNullException.ThrowIfNull(context);
+  //  ArgumentNullException.ThrowIfNull(writer);
+
+  //  var data = new List<string>(1_000_000);
+  //  var (fileCount, rowCount) = (0, 0);
+
+  //  using var stream = new FileStream(context.SourceFilePath, FileMode.Open, FileAccess.Read, FileShare.None, bufferSize: 0x_100_000, FileOptions.SequentialScan | FileOptions.Asynchronous);
+  //  using var reader = new StreamReader(stream, context.Encoding);
+  //  while(await reader.ReadLineAsync() is { } line) {
+  //    //data.Add(line);
+  //    //if(data.Count == data.Capacity) {
+  //    //  //(fileCount, rowCount) = (fileCount + 1, rowCount + await SaveDataAsync(context, data, writer));
+  //    //  await SaveData2Async();
+  //    //}//if
+  //  }//while
+
+  //  //if(data.Any()) {
+  //  //  //(fileCount, rowCount) = (fileCount + 1, rowCount + await SaveDataAsync(context, data, writer));
+  //  //  await SaveData2Async();
+  //  //}//if
+
+  //  return (fileCount, rowCount);
+
+  //  //async Task SaveData2Async() {
+  //  //  data.Sort((left, right) => RowComparer.Compare(left, right));
+
+  //  //  var path = context.GetNewFileName();
+  //  //  await File.WriteAllLinesAsync(path, data, context.Encoding, context.CancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+  //  //  await writer.WriteAsync(path, context.CancellationToken);
+
+  //  //  fileCount++;
+  //  //  rowCount += data.Count;
+  //  //  data.Clear();
+  //  //}
+
+  //  //async Task SaveData2Async() {
+  //  //  data.Sort((left, right) => RowComparer.Compare(left, right));
+
+  //  //  var path = context.GetNewFileName();
+  //  //  await File.WriteAllLinesAsync(path, data, context.Encoding, context.CancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+  //  //  await writer.WriteAsync(path, context.CancellationToken);
+
+  //  //  fileCount++;
+  //  //  rowCount += data.Count;
+  //  //  data.Clear();
+  //  //}
+
+  //  //static async Task<int> SaveDataAsync(ProcessingContext context, List<string> data, ChannelWriter<string> writer) {
+  //  //  data.Sort((left, right) => RowComparer.Compare(left, right));
+
+  //  //  var path = context.GetNewFileName();
+  //  //  await File.WriteAllLinesAsync(path, data, context.Encoding, context.CancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+  //  //  await writer.WriteAsync(path, context.CancellationToken);
+
+  //  //  var rowCount = data.Count;
+  //  //  data.Clear();
+  //  //  return rowCount;
+  //  //}
+  //}
 
   //static void Test() {
   //  var chars = new char[1000];
@@ -185,125 +313,28 @@ internal static class App
   //}
 }
 
-internal sealed class ProcessingContext
-{
-  public Guid OperationId { get; } = Guid.NewGuid();
-  public string WorkingDirectoryPath { get; set; } = String.Empty;
-  public string SourceFilePath { get; set; } = String.Empty;
-  public Encoding Encoding { get; set; } = Encoding.UTF8;
-  public CancellationToken CancellationToken { get; set; }
-
-  private FileNameGeneration FileNameGeneration { get; } = new();
-
-  public void EnsureWorkingDirectory() {
-    var path = Path.GetDirectoryName(SourceFilePath);
-    var workingDirectoryPath = Path.Combine(WorkingDirectoryPath ?? path!, OperationId.ToString("N"));
-    Directory.CreateDirectory(workingDirectoryPath);
-  }
-
-  public string GetNewFileName(int? iteration = null) {
-    var path = Path.GetDirectoryName(SourceFilePath);
-    var name = Path.GetFileNameWithoutExtension(SourceFilePath);
-    var extension = Path.GetExtension(SourceFilePath);
-    var index = FileNameGeneration.NewFileIndex(iteration);
-    return Path.Combine(WorkingDirectoryPath ?? path!, OperationId.ToString("N"), $"{name}-{index}{extension}");
-  }
-}
-
-internal sealed class FileNameGeneration
-{
-  private ulong index;
-  public string NewFileIndex(int? iteration = null) {
-    var value = Interlocked.Increment(ref index);
-    if(iteration is null) {
-      return value.ToString();
-    } else {
-      return $"{iteration}-{value}";
-    }//if
-  }
-}
-
-//internal interface IRowProcessing
+//internal sealed class ProcessingContext
 //{
-//  bool Add(ReadOnlyMemory<char> item);
-//  Task ProcessAsync(CancellationToken cancellationToken = default);
-//  void Compeleted();
-//}
+//  private ulong fileNameIndex;
 
-//internal sealed class RowReading : IDisposable, IAsyncDisposable
-//{
-//  public RowReading(string fileName, Encoding encoding) {
-//    Encoding = encoding ?? throw new ArgumentNullException(nameof(encoding));
-//    Delimeter = Encoding.GetBytes(Environment.NewLine);
-//    Stream = new FileStream(fileName, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 0x_100_000, FileOptions.SequentialScan | FileOptions.Asynchronous);
+//  public Guid OperationId { get; } = Guid.NewGuid();
+//  public string WorkingDirectoryPath { get; set; } = String.Empty;
+//  public string SourceFilePath { get; set; } = String.Empty;
+//  public Encoding Encoding { get; set; } = Encoding.UTF8;
+//  public int MaxRowBufferSizeInBytes { get; set; } = Encoding.UTF8.GetByteCount(Row.MaxString);
+//  public CancellationToken CancellationToken { get; set; }
 
-//    var maxRowBytes = Encoding.GetByteCount(Row.MaxString);
-//    Reader = PipeReader.Create(Stream, new StreamPipeReaderOptions(bufferSize: 64 * maxRowBytes, minimumReadSize: 16 * maxRowBytes));
+//  public void EnsureWorkingDirectory() {
+//    var path = Path.GetDirectoryName(SourceFilePath);
+//    var workingDirectoryPath = Path.Combine(WorkingDirectoryPath ?? path!, OperationId.ToString("N"));
+//    Directory.CreateDirectory(workingDirectoryPath);
 //  }
 
-//  public Encoding Encoding { get; }
-//  private byte[] Delimeter { get; }
-//  private FileStream Stream { get; }
-//  private PipeReader Reader { get; }
-
-//  public async Task ReadRows(IRowProcessing processing, CancellationToken cancellationToken = default) {
-//    ArgumentNullException.ThrowIfNull(processing);
-
-//    while(true) {
-//      var result = await Reader.ReadAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
-//      var buffer = result.Buffer;
-//      //var position = ReadRows(buffer, result.IsCompleted, processing);
-
-//      if(result.IsCompleted) {
-//        await Reader.CompleteAsync().ConfigureAwait(continueOnCapturedContext: true);
-//        break;
-//      }//if
-
-//      //Reader.AdvanceTo(position, buffer.End);
-//    }//while
-
-//    //await processing.CompeletedAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
-//  }
-
-//  private SequencePosition ReadRows(in ReadOnlySequence<byte> sequence, bool isCompleted, IRowProcessing processing) {
-//    var reader = new SequenceReader<byte>(sequence);
-//    while(!reader.End)
-//    {
-//      if(reader.TryReadTo(out ReadOnlySpan<byte> bytes, Delimeter, advancePastDelimiter: true)) {
-//        var buffer = ArrayPool<char>.Shared.Rent(Row.MaxStringLength);
-//        var charsWritten = Encoding.GetChars(bytes, buffer);
-//        var row = new Row(buffer.AsMemory()[..charsWritten]);
-//        //await processing.CompeletedAsync(buffer.AsMemory()[..charsWritten], cancellationToken);
-//      } else if(isCompleted) {
-//        var buffer = ArrayPool<char>.Shared.Rent(Row.MaxStringLength);
-//        //RowsArrays.Add(buffer);
-//        var charsWritten = Encoding.UTF8.GetChars(sequence, buffer);
-//        //var row = new Row(buffer.AsMemory()[..charsWritten]);
-//        //RowsData.Add(buffer.AsMemory()[..charsWritten]);
-//        //itemsReturned++;
-//        reader.Advance(sequence.Length);
-//      } else {
-//        break;
-//      }//if
-//    }//while
-
-//    return reader.Position;
-//  }
-
-//  private void CleanUp() {
-//    Reader.Complete();
-//    //RowsArrays.ForEach(item => ArrayPool<char>.Shared.Return(item));
-//    //RowsArrays.Clear();
-//    //RowsData.Clear();
-//  }
-
-//  public void Dispose() {
-//    CleanUp();
-//    Stream.Dispose();
-//  }
-
-//  public ValueTask DisposeAsync() {
-//    CleanUp();
-//    return Stream.DisposeAsync();
+//  public string GetNewFileName() {
+//    var path = Path.GetDirectoryName(SourceFilePath);
+//    var name = Path.GetFileNameWithoutExtension(SourceFilePath);
+//    var extension = Path.GetExtension(SourceFilePath);
+//    var index = Interlocked.Increment(ref fileNameIndex);
+//    return Path.Combine(WorkingDirectoryPath ?? path!, OperationId.ToString("N"), $"{name}-{index}{extension}");
 //  }
 //}

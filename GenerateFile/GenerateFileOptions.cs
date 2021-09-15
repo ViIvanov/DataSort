@@ -1,5 +1,4 @@
-﻿using System;
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 
 namespace DataSort.GenerateFile;
 
@@ -8,7 +7,7 @@ internal sealed class GenerateFileOptions
   public const string MinValueVallidationErrorMessage = "The field {0} must be greater than {1}.";
 
   [Required, MinLength(1)]
-  public string FileName { get; set; } = String.Empty;
+  public string FilePath { get; set; } = String.Empty;
 
   [Required, Range(0, UInt64.MaxValue, ErrorMessage = MinValueVallidationErrorMessage)]
   public double RequiredLengthGiB { get; set; }

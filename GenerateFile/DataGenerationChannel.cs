@@ -1,10 +1,8 @@
-﻿using System;
-using System.Diagnostics;
-using System.Threading;
-using System.Threading.Channels;
-using System.Threading.Tasks;
+﻿using System.Threading.Channels;
 
 namespace DataSort.GenerateFile;
+
+using Common;
 
 internal sealed class DataGenerationChannel
 {
@@ -16,7 +14,7 @@ internal sealed class DataGenerationChannel
     });
 
     var taskCount = concurrentGenerators > 0 ? concurrentGenerators : Environment.ProcessorCount;
-    WaitAllGeneratorsTask = CreateWhenAll(taskCount, async index => {
+    WaitAllGeneratorsTask = Tasks.WhenAll(taskCount, async index => {
       // Need two extra buffers:
       // * one for value after the previous value added to the channel
       // * one for value after the previous value read from the channel
@@ -26,8 +24,6 @@ internal sealed class DataGenerationChannel
         var iteration = 0;
         while(true) {
           var value = generation.NextData(iteration % buffersCount);
-
-          Debug.Print($"Adding: {value} by generation #{index} from buffer #{iteration % buffersCount}");
           iteration++;
 
           await Value.Writer.WriteAsync(value).ConfigureAwait(continueOnCapturedContext: false);
@@ -42,14 +38,6 @@ internal sealed class DataGenerationChannel
   private Task WaitAllGeneratorsTask { get; }
 
   public ValueTask<ReadOnlyMemory<char>> NextAsync(CancellationToken cancellationToken = default) => Value.Reader.ReadAsync(cancellationToken);
-
-  private static Task CreateWhenAll(int count, Func<int, Task> factory) {
-    var array = new Task[count];
-    for(var index = 0; index < array.Length; index++) {
-      array[index] = factory(index);
-    }//for
-    return Task.WhenAll(array);
-  }
 
   public async Task CompleteAsync() {
     Value.Writer.Complete();
