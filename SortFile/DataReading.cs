@@ -57,7 +57,7 @@ internal sealed class DataReading : IDisposable, IAsyncDisposable
       }//if
 
       if(result.IsCompleted && isEnd) {
-        await Reader.CompleteAsync().ConfigureAwait(continueOnCapturedContext: true);
+        await Reader.CompleteAsync().ConfigureAwait(continueOnCapturedContext: false);
         break;
       }//if
 
