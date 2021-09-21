@@ -111,7 +111,7 @@ internal static class App
     }//try
 
     await saving.DisposeAsync().ConfigureAwait(continueOnCapturedContext: false);
-    await generation.CompleteAsync().ConfigureAwait(continueOnCapturedContext: true);
+    await generation.CompleteAsync().ConfigureAwait(continueOnCapturedContext: false);
 
     stopwatch.Stop();
     logger.LogInformation($"{bytesWritten:N0} bytes written in {stopwatch.Elapsed}.");
