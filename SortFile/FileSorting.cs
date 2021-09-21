@@ -2,11 +2,11 @@
 using System.Text;
 using System.Threading.Channels;
 
-using DataSort.Common;
-
 using Microsoft.Extensions.Logging;
 
 namespace DataSort.SortFile;
+
+using Common;
 
 internal sealed class FileSorting
 {

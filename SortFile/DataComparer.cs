@@ -12,7 +12,7 @@ internal sealed class DataComparer : Comparer<ReadOnlyMemory<char>>
     var xtext = GetText(x, out var xdelimeter);
     var ytext = GetText(y, out var ydelimeter);
     var compareText = xtext.CompareTo(ytext, StringComparison.Ordinal);
-    if(compareText != 0) {
+    if(compareText is not 0) {
       return compareText;
     }//if
 
