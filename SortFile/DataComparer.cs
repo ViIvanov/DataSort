@@ -23,7 +23,7 @@ internal sealed class DataComparer : Comparer<ReadOnlyMemory<char>>
   private static ReadOnlySpan<char> GetText(ReadOnlySpan<char> value, out int delimeter) {
     delimeter = value.IndexOf(DataDescription.TextSeparator, StringComparison.Ordinal);
     if(delimeter <= 0) {
-      throw new ArgumentException($"Number separator \"{DataDescription.TextSeparator}\" not found in \"{value}\".", nameof(value));
+      throw new ArgumentException($"Number separator \"{DataDescription.TextSeparator}\" not found in \"{value.ToString()}\".", nameof(value));
     }//if
 
     return value[(delimeter + DataDescription.TextSeparator.Length)..];

@@ -36,7 +36,7 @@ internal sealed class DataGeneration : IDisposable
   }
 
   private static int NextData(Random random, Span<char> destination) {
-    var number = unchecked((ulong)random.NextInt64(Int64.MinValue, Int64.MaxValue));
+    var number = GetNextUInt64(random);
     var formatted = number.TryFormat(destination, out var charactersWritten);
     Debug.Assert(formatted, $"String representation of the Number {number:N0} is greater, than expected and not feat into buffer with length {destination.Length:N0}.");
 
@@ -56,6 +56,16 @@ internal sealed class DataGeneration : IDisposable
 #endif // DEBUG
 
     return charactersWritten;
+  }
+
+  private static ulong GetNextUInt64(Random random) {
+    var bytes = ArrayPool<byte>.Shared.Rent(sizeof(ulong));
+    try {
+      random.NextBytes(bytes);
+      return BitConverter.ToUInt64(bytes);
+    } finally {
+      ArrayPool<byte>.Shared.Return(bytes);
+    }//try
   }
 
   public void Dispose() {

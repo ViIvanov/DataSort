@@ -16,7 +16,7 @@ internal static class App
   private const int InvalidConfigurationExitCode = -2;
   private const int FailedExitCode = -3;
 
-  private static void Usage() => Console.WriteLine($"Usage: {Path.GetFileNameWithoutExtension(Environment.ProcessPath)} --{nameof(SortFileOptions.FilePath)} \"<input file path>\" --{nameof(SortFileOptions.MaxReadLines)} <max read lines>");
+  private static void Usage() => Console.WriteLine($"Usage: {Path.GetFileNameWithoutExtension(AppDomain.CurrentDomain.FriendlyName)} --{nameof(SortFileOptions.FilePath)} \"<input file path>\" --{nameof(SortFileOptions.MaxReadLines)} <max read lines>");
 
   private static async Task<int> Main(string[] args) {
     using var builder = new AppBuilder(typeof(App), args);

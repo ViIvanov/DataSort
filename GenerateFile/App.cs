@@ -66,7 +66,9 @@ internal static class App
   }
 
   private static async Task GenerateFileAsync(ILogger logger, GenerateFileOptions options) {
-    ArgumentNullException.ThrowIfNull(options);
+    if(options is null) {
+      throw new ArgumentNullException(nameof(options));
+    }//if
 
     var encoding = Encoding.GetEncoding(options.FileSaving.EncodingName);
     var maxBufferSize = encoding.GetByteCount(DataDescription.MaxString);
