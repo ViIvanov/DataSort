@@ -5,8 +5,12 @@ using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 
 namespace DataSort.SortFile;
+using System.Diagnostics.CodeAnalysis;
+using System.Threading;
 
 using Common;
+
+using Microsoft.VisualBasic;
 
 internal sealed class FileSorting
 {
@@ -74,28 +78,23 @@ internal sealed class FileSorting
     }, cancellationToken);
 
     var pairingTask = Task.Run(async () => {
-      var fileByIteration = new Dictionary<int, List<string>>();
+      var pairing = new FilePairing();
       await foreach(var (filePath, iteration) in pairingChannel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false)) {
-        if(fileByIteration.TryGetValue(iteration, out var files) && files.Any()) {
-          var lastFile = files.Last();
-          files.RemoveAt(files.Count - 1);
-          await mergeChannel.Writer.WriteAsync((lastFile, filePath, iteration), cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
-
-          if(!files.Any() && fileByIteration.TryGetValue(iteration - 1, out var previousIteration)) {
-            files.AddRange(previousIteration);
+        if(String.IsNullOrEmpty(filePath)) {
+          // Last file from a "split" operation was added to the channel and now we are know how many files should be processed on each iteration.
+          // "iteration" contains number of files after the "split" operation.
+          if(pairing.SetItemCountOnFirstIteration(iteration, out var pair)) {
+            await mergeChannel.Writer.WriteAsync(pair, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
           }//if
         } else {
-          if(files is null) {
-            files = new List<string>();
-            fileByIteration.Add(iteration, files);
+          if(pairing.TryFindPair(iteration, filePath, out var leftFile)) {
+            await mergeChannel.Writer.WriteAsync((leftFile, filePath, iteration), cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
           }//if
-
-          files.Add(filePath);
         }//if
       }//for
 
       mergeChannel.Writer.Complete();
-      return fileByIteration.Single(item => item.Value.Any()).Value.Single();
+      return pairing.GetSingleFile();
     }, cancellationToken);
 
     var totalProcessingFiles = 0;
@@ -122,14 +121,18 @@ internal sealed class FileSorting
     var (fileCount, lineCount) = await SplitFileAsync(logger, pairingChannel.Writer, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
     stopwatch.Stop();
 
+    await pairingChannel.Writer.WriteAsync((FilePath: String.Empty, Iteration: fileCount), cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+    //pairingChannel.Writer.Complete();
+
+    //Volatile.Write(ref firstIterationFiles, value: fileCount);
     // We are merging two files at the time, so during sorting we will process (2 * N - 1) files where N is initial file count after splitting source file
     Volatile.Write(ref totalProcessingFiles, value: fileCount * 2 - 1);
 
     logger.LogInformation($"Read {fileCount:N0} files / {lineCount:N0} lines in {stopwatch.Elapsed}");
 
-    if(fileCount == 1) {
-      pairingChannel.Writer.Complete();
-    }//if
+    //if(fileCount == 1) {
+    //  pairingChannel.Writer.Complete();
+    //}//if
 
     var resultFilePath = await pairingTask.ConfigureAwait(continueOnCapturedContext: false);
     await mergeTask.ConfigureAwait(continueOnCapturedContext: false);
@@ -141,7 +144,9 @@ internal sealed class FileSorting
   }
 
   private async Task<(int FileCount, int LineCount)> SplitFileAsync(ILogger logger, ChannelWriter<(string FilePath, int Iteration)> writer, CancellationToken cancellationToken = default) {
-    ArgumentNullException.ThrowIfNull(writer);
+    if(writer is null) {
+      throw new ArgumentNullException(nameof(writer));
+    }//if
 
     var (fileCount, lineCount) = (0, 0);
 
@@ -203,5 +208,73 @@ internal sealed class FileSorting
     }//try
 
     return outputFileName;
+  }
+
+  private sealed class FilePairing
+  {
+    private SortedDictionary<int, List<string>> Items { get; } = new();
+    private int ItemCountOnFirstIteration { get; set; } = 0;
+
+    public bool TryFindPair(int iteration, string value, [MaybeNullWhen(returnValue: false)] out string otherValue) {
+      if(Items.TryGetValue(iteration, out var items) && items.Any()) {
+        otherValue = RetriveExistingItem(items);
+        return true;
+      } else if(ItemCountOnFirstIteration > 0) {
+        // Try to join new value with existing value on other iteration
+        foreach(var key in Items.Keys) {
+          var list = Items[key];
+          if(list.Any()) {
+            otherValue = RetriveExistingItem(list);
+            return true;
+          }//if
+        }//for
+      }//if
+
+      if(items is null) {
+        items = new List<string>();
+        Items.Add(iteration, items);
+      }//if
+
+      items.Add(value);
+
+      otherValue = default;
+      return false;
+
+      static string RetriveExistingItem(List<string> list) {
+        var existingItem = list[0];
+        list.RemoveAt(0);
+        return existingItem;
+      }
+    }
+
+    public bool SetItemCountOnFirstIteration(int value, out (string, string, int) pair) {
+      if(value <= 0) {
+        throw new ArgumentOutOfRangeException(nameof(value), value, message: null);
+      } else if(ItemCountOnFirstIteration > 0) {
+        throw new InvalidOperationException($"{nameof(ItemCountOnFirstIteration)} already initialized.");
+      }//if
+
+      ItemCountOnFirstIteration = value;
+
+      var left = default(string);
+      foreach(var key in Items.Keys) {
+        var list = Items[key];
+        if(list.Any()) {
+          if(left is null) {
+            left = list[0];
+            list.RemoveAt(0);
+          } else {
+            pair = (left, list[0], key);
+            list.RemoveAt(0);
+            return true;
+          }//if
+        }//if
+      }//for
+
+      pair = default;
+      return false;
+    }
+
+    public string GetSingleFile() => Items.Single(item => item.Value.Any()).Value.Single();
   }
 }
