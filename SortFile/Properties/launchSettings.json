@@ -18,7 +18,7 @@
     },
     "SSD, 100M": {
       "commandName": "Project",
-      "commandLineArgs": "--FilePath \"d:\\Develop\\DataSort\\DataSort-100M-Debug.txt\" --MaxReadLines 12000000"
+      "commandLineArgs": "--FilePath \"d:\\Develop\\DataSort\\DataSort-100M-Debug.txt\" --MaxReadLines 1200000"
     }
   }
 }
