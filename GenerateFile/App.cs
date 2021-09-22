@@ -16,7 +16,7 @@ internal static class App
   private const int InvalidArgsExitCode = -1;
   private const int InvalidConfigurationExitCode = -2;
   private const int FailedExitCode = -3;
-  
+
   private static void Usage() => Console.WriteLine($"Usage: {AppDomain.CurrentDomain.FriendlyName} --{nameof(GenerateFileOptions.FilePath)} \"<output file path>\" --{nameof(GenerateFileOptions.RequiredLengthGiB)} <required length in GiB>");
 
   private static async Task<int> Main(string[] args) {
