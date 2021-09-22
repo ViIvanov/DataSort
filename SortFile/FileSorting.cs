@@ -2,279 +2,235 @@
 using System.Text;
 using System.Threading.Channels;
 
-using Microsoft.Extensions.Logging;
-
 namespace DataSort.SortFile;
-using System.Diagnostics.CodeAnalysis;
-using System.Threading;
 
 using Common;
 
-using Microsoft.VisualBasic;
-
 internal sealed class FileSorting
 {
-  public FileSorting(string filePath, Encoding encoding, int sortChunkSize, string? workingDirectory = null) {
-    if(sortChunkSize <= 0) {
-      throw new ArgumentNullException(nameof(sortChunkSize));
+  public FileSorting(SortFileOptions configuration) {
+    if(configuration is null) {
+      throw new ArgumentNullException(nameof(configuration));
     }//if
 
-    SourceFileName = filePath;
-    Encoding = encoding ?? throw new ArgumentNullException(nameof(encoding));
-    SortChunkSize = sortChunkSize;
+    Configuration = configuration.File;
+    SourceFilePath = configuration.FilePath;
+    Encoding = Encoding.GetEncoding(configuration.File.EncodingName);
+    SortChunkSize = configuration.MaxReadLines;
 
     MaxLineBufferSizeInBytes = Encoding.GetByteCount(DataDescription.MaxString);
 
-    FileNameGeneration = FileNameGeneration.Create(SourceFileName, workingDirectory);
-    if(!String.IsNullOrEmpty(FileNameGeneration.DirectoryPath) && !Directory.Exists(FileNameGeneration.DirectoryPath)) {
-      Directory.CreateDirectory(FileNameGeneration.DirectoryPath);
-    }//if
+    FileNameGeneration = FileNameGeneration.Create(SourceFilePath, Configuration.WorkingDirectory);
   }
 
-  public string SourceFileName { get; }
+  public SortFileConfigurationOptions Configuration { get; }
+  public string SourceFilePath { get; }
   public Encoding Encoding { get; }
   public int SortChunkSize { get; }
   private int MaxLineBufferSizeInBytes { get; }
   private FileNameGeneration FileNameGeneration { get; }
 
-  public async Task<string> SortFileAsync(ILogger logger, CancellationToken cancellationToken = default) {
-    var pairingChannel = Channel.CreateUnbounded<(string FilePath, int Iteration)>(new UnboundedChannelOptions {
-      SingleReader = true,
-      SingleWriter = false,
-    });
+  private static long GetFileLength(string filePath) => new FileInfo(filePath).Length;
 
-    var mergeChannel = Channel.CreateUnbounded<(string LeftFilePath, string RightFilePath, int Iteration)>(new UnboundedChannelOptions {
-      SingleReader = false,
-      SingleWriter = true,
-    });
-
+  public async Task<string> SortFileAsync(CancellationToken cancellationToken = default) {
     var deleteFilesChannel = Channel.CreateUnbounded<string>(new UnboundedChannelOptions {
       SingleReader = true,
       SingleWriter = false,
     });
 
-    var mergeTask = Tasks.WhenAll(count: 16, async _ => {
-      await foreach(var (leftFile, rightFile, iteration) in mergeChannel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false)) {
-        var stopwatch = Stopwatch.StartNew();
-        var filePath = await MergeFilesAsync(leftFile, rightFile, cancellationToken);
-        stopwatch.Stop();
-
-        ReportMerge(leftFile, rightFile, filePath, iteration, stopwatch.Elapsed);
-
-        await pairingChannel.Writer.WriteAsync((filePath, iteration + 1), cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
-        await deleteFilesChannel.Writer.WriteAsync(leftFile, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
-        await deleteFilesChannel.Writer.WriteAsync(rightFile, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
-      }//for
-
-      void ReportMerge(string left, string right, string result, int iteration, TimeSpan elapsed) {
-        var leftInfo = new FileInfo(left);
-        var rightInfo = new FileInfo(right);
-        var resultInfo = new FileInfo(result);
-
-        logger.LogInformation($"Merge {GetFileName(leftInfo)} [{leftInfo.Length:N0}] and {GetFileName(rightInfo)} [{rightInfo.Length:N0}] => [{iteration}] {GetFileName(resultInfo)} [{resultInfo.Length:N0}] in {elapsed}");
-
-        static string? GetFileName(FileInfo info) => Path.GetFileNameWithoutExtension(info?.Name);
-      }
-    }, cancellationToken);
-
-    var pairingTask = Task.Run(async () => {
-      var pairing = new FilePairing();
-      await foreach(var (filePath, iteration) in pairingChannel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false)) {
-        if(String.IsNullOrEmpty(filePath)) {
-          // Last file from a "split" operation was added to the channel and now we are know how many files should be processed on each iteration.
-          // "iteration" contains number of files after the "split" operation.
-          if(pairing.SetItemCountOnFirstIteration(iteration, out var pair)) {
-            await mergeChannel.Writer.WriteAsync(pair, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
-          }//if
-        } else {
-          if(pairing.TryFindPair(iteration, filePath, out var leftFile)) {
-            await mergeChannel.Writer.WriteAsync((leftFile, filePath, iteration), cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
-          }//if
-        }//if
-      }//for
-
-      mergeChannel.Writer.Complete();
-      return pairing.GetSingleFile();
-    }, cancellationToken);
-
-    var totalProcessingFiles = 0;
     var deleteFilesTask = Task.Run(async () => {
-      var deletedFiles = 0;
       await foreach(var filePath in deleteFilesChannel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false)) {
-        deletedFiles++;
         try {
           File.Delete(filePath);
-        } catch(IOException ex) {
-          logger.LogError(ex, $"Error deleting file \"{filePath}\".");
+        } catch(SystemException ex) {
+          // Not a critical error
+          Console.WriteLine($"Error deleting file \"{filePath}\": {ex}.");
         }//try
-
-        var processingFiles = Volatile.Read(ref totalProcessingFiles);
-
-        // The result, sorted file, stored in the last file. This file will not be deleted.
-        if(processingFiles > 0 && deletedFiles == processingFiles - 1) {
-          pairingChannel.Writer.Complete();
-        }//if
       }//for
     }, cancellationToken);
 
-    var stopwatch = Stopwatch.StartNew();
-    var (fileCount, lineCount) = await SplitFileAsync(logger, pairingChannel.Writer, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
-    stopwatch.Stop();
+    var stopwatchSplit = Stopwatch.StartNew();
+    var (files, lineCount) = await SplitFileAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+    stopwatchSplit.Stop();
+    Console.WriteLine($"Read {files.Count:N0} files / {lineCount:N0} lines in {stopwatchSplit.Elapsed}");
 
-    await pairingChannel.Writer.WriteAsync((FilePath: String.Empty, Iteration: fileCount), cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
-    //pairingChannel.Writer.Complete();
-
-    //Volatile.Write(ref firstIterationFiles, value: fileCount);
-    // We are merging two files at the time, so during sorting we will process (2 * N - 1) files where N is initial file count after splitting source file
-    Volatile.Write(ref totalProcessingFiles, value: fileCount * 2 - 1);
-
-    logger.LogInformation($"Read {fileCount:N0} files / {lineCount:N0} lines in {stopwatch.Elapsed}");
-
-    //if(fileCount == 1) {
-    //  pairingChannel.Writer.Complete();
-    //}//if
-
-    var resultFilePath = await pairingTask.ConfigureAwait(continueOnCapturedContext: false);
-    await mergeTask.ConfigureAwait(continueOnCapturedContext: false);
+    var stopwatchMerge = Stopwatch.StartNew();
+    var filePath = await MergeFilesAsync(files, deleteFilesChannel, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+    stopwatchMerge.Stop();
+    Console.WriteLine($"Merge {files.Count:N0} files in {stopwatchMerge.Elapsed}");
 
     deleteFilesChannel.Writer.Complete();
     await deleteFilesTask.ConfigureAwait(continueOnCapturedContext: false);
 
-    return resultFilePath;
+    return filePath;
   }
 
-  private async Task<(int FileCount, int LineCount)> SplitFileAsync(ILogger logger, ChannelWriter<(string FilePath, int Iteration)> writer, CancellationToken cancellationToken = default) {
-    if(writer is null) {
-      throw new ArgumentNullException(nameof(writer));
+  private async Task<(IReadOnlyList<string> Files, int LineCount)> SplitFileAsync(CancellationToken cancellationToken = default) {
+    var files = new List<string>();
+    var lineCount = 0;
+
+    var sourceFileLength = GetFileLength(SourceFilePath);
+    var currentLength = 0L;
+
+    await using var reading = new DataReading(SourceFilePath, Encoding, Configuration);
+    var savingTask = default(Task?);
+    await foreach(var lines in reading.ReadLinesAsync(SortChunkSize, cancellationToken).ConfigureAwait(continueOnCapturedContext: false)) {
+      if(savingTask is not null) {
+        await savingTask.ConfigureAwait(continueOnCapturedContext: false);
+      }//if
+
+      // Will sort and save temporary file while read the next portion of data.
+      savingTask = Task.Run(() => SaveDataAsync(lines), cancellationToken);
+    }//for
+
+    if(savingTask is not null) {
+      await savingTask.ConfigureAwait(continueOnCapturedContext: false);
     }//if
 
-    var (fileCount, lineCount) = (0, 0);
-
-    await using var reading = new DataReading(SourceFileName, Encoding);
-    await foreach(var lines in reading.ReadLinesAsync(SortChunkSize, cancellationToken).ConfigureAwait(continueOnCapturedContext: false)) {
+    async Task SaveDataAsync(List< string> lines) {
       lines.Sort((left, right) => DataComparer.Compare(left, right));
 
-      var path = FileNameGeneration.GetNewFilePath();
-      await using(var saving = new FileSaving(path, MaxLineBufferSizeInBytes, Encoding, streamBufferSize: 0x_10_0000)) {
+      var filePath = FileNameGeneration.GetNewFilePath();
+      await using(var saving = new FileSaving(filePath, MaxLineBufferSizeInBytes, Encoding, streamBufferSize: Configuration.SavingFileBufferSizeMiB * 1024 * 1024)) {
         foreach(var line in lines) {
           await saving.WriteDataAsync(line.AsMemory(), cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
         }//for
       }//using
 
-      logger.LogInformation($"Saved file {Path.GetFileNameWithoutExtension(path)}");
-      await writer.WriteAsync((path, Iteration: 0), cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
-
-      fileCount++;
+      files.Add(filePath);
       lineCount += lines.Count;
-    }//for
+      lines.Clear();
 
-    return (fileCount, lineCount);
-  }
-
-  private async Task<string> MergeFilesAsync(string leftFile, string rightFile, CancellationToken cancellationToken = default) {
-    const int ReadBufferSize = 0x_100_0000;
-    const int WriteBufferSize = 0x_10_0000;
-
-    await using var leftStream = new FileStream(leftFile, FileMode.Open, FileAccess.Read, FileShare.None, ReadBufferSize, FileOptions.SequentialScan | FileOptions.Asynchronous);
-    using var leftReader = new StreamReader(leftStream, Encoding);
-
-    await using var rightStream = new FileStream(rightFile, FileMode.Open, FileAccess.Read, FileShare.None, ReadBufferSize, FileOptions.SequentialScan | FileOptions.Asynchronous);
-    using var rightReader = new StreamReader(rightStream, Encoding);
-
-    var outputFileName = FileNameGeneration.GetNewFilePath();
-    await using var saving = new FileSaving(outputFileName, MaxLineBufferSizeInBytes, Encoding, WriteBufferSize);
-
-    var leftLine = await leftReader.ReadLineAsync();
-    var rightLine = await rightReader.ReadLineAsync();
-
-    while(leftLine is not null && rightLine is not null) {
-      if(DataComparer.Compare(leftLine, rightLine) <= 0) {
-        await saving.WriteDataAsync(leftLine.AsMemory(), cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
-        leftLine = await leftReader.ReadLineAsync().ConfigureAwait(continueOnCapturedContext: false);
-      } else {
-        await saving.WriteDataAsync(rightLine.AsMemory(), cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
-        rightLine = await rightReader.ReadLineAsync().ConfigureAwait(continueOnCapturedContext: false);
-      }//if
-    }//while
-
-    while(leftLine is not null) {
-      await saving.WriteDataAsync(leftLine.AsMemory(), cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
-      leftLine = await leftReader.ReadLineAsync().ConfigureAwait(continueOnCapturedContext: false);
-    }//try
-
-    while(rightLine is not null) {
-      await saving.WriteDataAsync(rightLine.AsMemory(), cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
-      rightLine = await rightReader.ReadLineAsync().ConfigureAwait(continueOnCapturedContext: false);
-    }//try
-
-    return outputFileName;
-  }
-
-  private sealed class FilePairing
-  {
-    private SortedDictionary<int, List<string>> Items { get; } = new();
-    private int ItemCountOnFirstIteration { get; set; } = 0;
-
-    public bool TryFindPair(int iteration, string value, [MaybeNullWhen(returnValue: false)] out string otherValue) {
-      if(Items.TryGetValue(iteration, out var items) && items.Any()) {
-        otherValue = RetriveExistingItem(items);
-        return true;
-      } else if(ItemCountOnFirstIteration > 0) {
-        // Try to join new value with existing value on other iteration
-        foreach(var key in Items.Keys) {
-          var list = Items[key];
-          if(list.Any()) {
-            otherValue = RetriveExistingItem(list);
-            return true;
-          }//if
-        }//for
-      }//if
-
-      if(items is null) {
-        items = new List<string>();
-        Items.Add(iteration, items);
-      }//if
-
-      items.Add(value);
-
-      otherValue = default;
-      return false;
-
-      static string RetriveExistingItem(List<string> list) {
-        var existingItem = list[0];
-        list.RemoveAt(0);
-        return existingItem;
-      }
+      var fileLength = GetFileLength(filePath);
+      currentLength += fileLength;
+      var currentProgress = currentLength < sourceFileLength ? (int)((double)currentLength / sourceFileLength * 100) : 100;
+      Console.WriteLine($"Saved [{currentProgress,3:N0}%] \"{Path.GetFileNameWithoutExtension(filePath)}\" [{fileLength:N0}].");
     }
 
-    public bool SetItemCountOnFirstIteration(int value, out (string, string, int) pair) {
-      if(value <= 0) {
-        throw new ArgumentOutOfRangeException(nameof(value), value, message: null);
-      } else if(ItemCountOnFirstIteration > 0) {
-        throw new InvalidOperationException($"{nameof(ItemCountOnFirstIteration)} already initialized.");
-      }//if
+    return (files, lineCount);
+  }
 
-      ItemCountOnFirstIteration = value;
-
-      var left = default(string);
-      foreach(var key in Items.Keys) {
-        var list = Items[key];
-        if(list.Any()) {
-          if(left is null) {
-            left = list[0];
-            list.RemoveAt(0);
-          } else {
-            pair = (left, list[0], key);
-            list.RemoveAt(0);
-            return true;
-          }//if
+  private async Task<string> MergeFilesAsync(IReadOnlyCollection<string> files, ChannelWriter<string> deleteFilesChannelWriter, CancellationToken cancellationToken = default) {
+    var items = new List<MergeFileItem>(files.Count);
+    try {
+      var bufferSize = Configuration.MergeFileReadBufferSizeMiB * 1024 * 1024;
+      foreach(var filePath in files) {
+        var item = await MergeFileItem.OpenAsync(filePath, Encoding, bufferSize).ConfigureAwait(continueOnCapturedContext: false);
+        if(item is not null) {
+          items.Add(item);
         }//if
       }//for
 
-      pair = default;
-      return false;
+      // Sorting items in reversed order, to have minimal (first) item at the tail of the list.
+      // After that, the last item will be removed instead of first item.
+      // Hope, it can reduce movements of items in the list.
+      items.Sort(MergeFileItem.ReverseComparer);
+
+      var outputFileLength = GetFileLength(SourceFilePath); // Pre-allocate space for output file.
+      var outputFileName = FileNameGeneration.GetNewFilePath();
+      var writeBufferSize = Configuration.MergeFileWriteBufferSizeMiB * 1024 * 1024;
+      await using var saving = new FileSaving(outputFileName, MaxLineBufferSizeInBytes, Encoding, writeBufferSize, requiredLength: outputFileLength);
+
+      var (currentLength, progress) = (0L, 0);
+      while(items.Count > 0) {
+        var lastItemIndex = items.Count - 1;
+        var item = items[lastItemIndex];
+        items.RemoveAt(lastItemIndex);
+        currentLength += await saving.WriteDataAsync(item.CurrentValue.AsMemory(), cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+        PrintProgress(currentLength, outputFileLength, ref progress);
+
+        if(await item.ReadNext().ConfigureAwait(continueOnCapturedContext: false)) {
+          var index = items.BinarySearch(item, MergeFileItem.ReverseComparer);
+          items.Insert(index: index >= 0 ? index : ~index, item);
+        } else {
+          await item.DisposeAsync().ConfigureAwait(continueOnCapturedContext: false);
+          await deleteFilesChannelWriter.WriteAsync(item.FilePath, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+        }//if
+      }//while
+
+      return outputFileName;
+    } finally {
+      foreach(var item in items) {
+        await item.DisposeAsync().ConfigureAwait(continueOnCapturedContext: false);
+      }//for
+    }//try
+
+    static bool PrintProgress(long currentValue, long maxValue, ref int progress) {
+      var currentProgress = currentValue < maxValue ? (int)((double)currentValue / maxValue * 100) : 100;
+      if(currentProgress > progress) {
+        var text = currentProgress % 10 is 0 ? $"{currentProgress,3}%{Environment.NewLine}" : ".";
+        Console.Write(text);
+        progress = currentProgress;
+        return true;
+      } else {
+        return false;
+      }//if
+    }
+  }
+
+  private sealed class MergeFileItem : IDisposable, IAsyncDisposable
+  {
+    private MergeFileItem(string filePath, Encoding encoding, int bufferSize) {
+      FilePath = filePath;
+
+      try {
+        Stream = new FileStream(FilePath, FileMode.Open, FileAccess.Read, FileShare.None, bufferSize, FileOptions.SequentialScan | FileOptions.Asynchronous);
+        Reader = new StreamReader(Stream, encoding);
+      } catch {
+        Dispose();
+        throw;
+      }//try
     }
 
-    public string GetSingleFile() => Items.Single(item => item.Value.Any()).Value.Single();
+    public static Comparer<MergeFileItem> ReverseComparer { get; } = new MergeFileItemReverseComparer();
+
+    public string? CurrentValue { get; private set; }
+
+    public string FilePath { get; }
+    private FileStream Stream { get; }
+    private StreamReader Reader { get; }
+
+    public static async Task<MergeFileItem?> OpenAsync(string filePath, Encoding encoding, int bufferSize) {
+      var item = new MergeFileItem(filePath, encoding, bufferSize);
+      try {
+        var hasValue = await item.ReadNext().ConfigureAwait(continueOnCapturedContext: false);
+        if(!hasValue) {
+          await item.DisposeAsync().ConfigureAwait(continueOnCapturedContext: false);
+          return null;
+        } else {
+          return item;
+        }//if
+      } catch {
+        await item.DisposeAsync().ConfigureAwait(continueOnCapturedContext: false);
+        throw;
+      }//try
+    }
+
+    public override string ToString() => $"[{Path.GetFileNameWithoutExtension(FilePath)}]: {CurrentValue}";
+
+    public async Task<bool> ReadNext() => (CurrentValue = await Reader.ReadLineAsync().ConfigureAwait(continueOnCapturedContext: false)) is not null;
+
+    public ValueTask DisposeAsync() {
+      Reader?.Dispose();
+      return Stream?.DisposeAsync() ?? default;
+    }
+
+    public void Dispose() {
+      Reader?.Dispose();
+      Stream?.Dispose();
+    }
+
+    private sealed class MergeFileItemReverseComparer : Comparer<MergeFileItem>
+    {
+      public override int Compare(MergeFileItem? x, MergeFileItem? y) {
+        if(x is null) {
+          return y is null ? 0 : 1;
+        } else if(y is null) {
+          return -1;
+        } else {
+          return DataComparer.Compare(y.CurrentValue, x.CurrentValue);
+        }//if
+      }
+    }
   }
 }

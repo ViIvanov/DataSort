@@ -32,16 +32,21 @@ internal static class App
 
     try {
       var operationId = Guid.NewGuid();
-      var encoding = Encoding.GetEncoding(options.File.EncodingName);
 
-      var workingDirectoryStart = String.IsNullOrEmpty(options.File.WorkingDirectory) ? Path.GetDirectoryName(options.FilePath) : options.File.WorkingDirectory;
-      var workingDirectory = Path.Combine(workingDirectoryStart ?? String.Empty, operationId.ToString("N"));
-      Console.WriteLine($"Sort file \"{Path.GetFileName(options.FilePath)}\" in directory \"{workingDirectory}\".");
+      var workingDirectory = String.IsNullOrEmpty(options.File.WorkingDirectory) ? Path.GetDirectoryName(options.FilePath) : options.File.WorkingDirectory;
+      options.File.WorkingDirectory = Path.Combine(workingDirectory ?? String.Empty, operationId.ToString("N"));
+      if(!Directory.Exists(options.File.WorkingDirectory)) {
+        Directory.CreateDirectory(options.File.WorkingDirectory);
+      }//if
+
+      Console.WriteLine($"Sort file \"{Path.GetFileName(options.FilePath)}\" in directory \"{options.File.WorkingDirectory}\".");
+      Console.WriteLine($"Start memory monitor for process #{Environment.ProcessId} and press <Enter>");
+      Console.ReadLine();
 
       var stopwatch = Stopwatch.StartNew();
 
-      var sorting = new FileSorting(options.FilePath, encoding, options.MaxReadLines, workingDirectory);
-      var filePath = await sorting.SortFileAsync(builder.Logger).ConfigureAwait(continueOnCapturedContext: false);
+      var sorting = new FileSorting(options);
+      var filePath = await sorting.SortFileAsync().ConfigureAwait(continueOnCapturedContext: false);
 
       stopwatch.Stop();
       Console.WriteLine($"File \"{Path.GetFileName(options.FilePath)}\" sorted as \"{Path.GetFileName(filePath)}\" in {stopwatch.Elapsed}.");
