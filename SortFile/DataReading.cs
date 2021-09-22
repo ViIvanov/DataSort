@@ -9,16 +9,22 @@ using Common;
 
 internal sealed class DataReading : IDisposable, IAsyncDisposable
 {
-  public DataReading(string fileName, Encoding encoding) {
+  public DataReading(string fileName, Encoding encoding, SortFileConfigurationOptions configuration) {
+    if(configuration is null) {
+      throw new ArgumentNullException(nameof(configuration));
+    }//if
+
     Encoding = encoding ?? throw new ArgumentNullException(nameof(encoding));
 
     DelimeterCharacters = Environment.NewLine.ToCharArray();
     DelimeterBytes = Encoding.GetBytes(DelimeterCharacters);
 
-    Stream = new FileStream(fileName, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 0x_100_000, FileOptions.SequentialScan | FileOptions.Asynchronous);
+    var streamBufferSize = configuration.ReadingStreamBufferSizeMiB * 1024 * 1024;
+    Stream = new FileStream(fileName, FileMode.Open, FileAccess.Read, FileShare.Read, streamBufferSize, FileOptions.SequentialScan | FileOptions.Asynchronous);
 
     var maxRowBytes = Encoding.GetByteCount(DataDescription.MaxString);
-    var (bufferSize, minimumReadSize) = (0x_10_000 * maxRowBytes, 16 * maxRowBytes);
+    var bufferSize = configuration.ReadingPipeBufferSizeFactor * maxRowBytes;
+    var minimumReadSize = configuration.ReadingPipeMinimumReadSizeFactor * maxRowBytes;
     var options = new StreamPipeReaderOptions(bufferSize: bufferSize, minimumReadSize: minimumReadSize);
     Reader = PipeReader.Create(Stream, options);
   }
@@ -36,12 +42,14 @@ internal sealed class DataReading : IDisposable, IAsyncDisposable
     }//if
 
     var isFirstRead = true;
-    var list = new List<string>(capacity: chunkSize);
+    var list0 = new List<string>(capacity: chunkSize);
+    var list1 = new List<string>(capacity: chunkSize);
+    var currentList = list0;
     while(true) {
       var result = await Reader.ReadAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
 
       if(isFirstRead) {
-        // Read encoding preambule, if required
+        // Read encoding preamble, if required
         var (preamble, _) = ReadPreamble(result.Buffer, result.IsCompleted);
         Reader.AdvanceTo(preamble, result.Buffer.End);
         result = await Reader.ReadAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
@@ -49,11 +57,12 @@ internal sealed class DataReading : IDisposable, IAsyncDisposable
         isFirstRead = false;
       }//if
 
-      var (position, isEnd) = ReadLines(result.Buffer, result.IsCompleted, list);
+      var (position, isEnd) = ReadLines(result.Buffer, result.IsCompleted, currentList);
 
-      if(list.Count == list.Capacity || result.IsCompleted && isEnd) {
-        yield return list;
-        list.Clear();
+      if(currentList.Count == currentList.Capacity || result.IsCompleted && isEnd) {
+        yield return currentList;
+        currentList = currentList == list0 ? list1 : list0;
+        currentList.Clear();
       }//if
 
       if(result.IsCompleted && isEnd) {
