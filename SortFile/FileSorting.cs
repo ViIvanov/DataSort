@@ -52,7 +52,7 @@ internal sealed class FileSorting
     var stopwatchSplit = Stopwatch.StartNew();
     var (files, lineCount) = await SplitFileAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
     stopwatchSplit.Stop();
-    Console.WriteLine($"Read {files.Count:N0} files / {lineCount:N0} lines in {stopwatchSplit.Elapsed}");
+    Console.WriteLine($"Split to {files.Count:N0} files / {lineCount:N0} lines in {stopwatchSplit.Elapsed}");
 
     var stopwatchMerge = Stopwatch.StartNew();
     var filePath = await MergeFilesAsync(files, deleteFilesChannel, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
