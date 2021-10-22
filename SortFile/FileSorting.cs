@@ -111,6 +111,9 @@ internal sealed class FileSorting
   }
 
   private async Task<string> MergeFilesAsync(IReadOnlyCollection<string> files, ChannelWriter<string> deleteFilesChannelWriter, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(files);
+    ArgumentNullException.ThrowIfNull(deleteFilesChannelWriter);
+
     var items = new List<MergeFileItem>(files.Count);
     try {
       var bufferSize = Configuration.MergeFileReadBufferSizeMiB * 1024 * 1024;
@@ -136,7 +139,7 @@ internal sealed class FileSorting
         var lastItemIndex = items.Count - 1;
         var item = items[lastItemIndex];
         items.RemoveAt(lastItemIndex);
-        currentLength += await saving.WriteDataAsync(item.CurrentValue.AsMemory(), cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+        currentLength += await saving.WriteDataAsync(item.CurrentLine.AsMemory(), cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
         PrintProgress(currentLength, outputFileLength, ref progress);
 
         if(await item.ReadNext().ConfigureAwait(continueOnCapturedContext: false)) {
@@ -184,9 +187,10 @@ internal sealed class FileSorting
 
     public static Comparer<MergeFileItem> ReverseComparer { get; } = new MergeFileItemReverseComparer();
 
-    public string? CurrentValue { get; private set; }
+    public string? CurrentLine { get; private set; }
 
     public string FilePath { get; }
+
     private FileStream Stream { get; }
     private StreamReader Reader { get; }
 
@@ -206,9 +210,9 @@ internal sealed class FileSorting
       }//try
     }
 
-    public override string ToString() => $"[{Path.GetFileNameWithoutExtension(FilePath)}]: {CurrentValue}";
+    public override string ToString() => $"[{Path.GetFileNameWithoutExtension(FilePath)}]: {CurrentLine}";
 
-    public async Task<bool> ReadNext() => (CurrentValue = await Reader.ReadLineAsync().ConfigureAwait(continueOnCapturedContext: false)) is not null;
+    public async Task<bool> ReadNext() => (CurrentLine = await Reader.ReadLineAsync().ConfigureAwait(continueOnCapturedContext: false)) is not null;
 
     public ValueTask DisposeAsync() {
       Reader?.Dispose();
@@ -228,7 +232,7 @@ internal sealed class FileSorting
         } else if(y is null) {
           return -1;
         } else {
-          return DataComparer.Compare(y.CurrentValue, x.CurrentValue);
+          return DataComparer.Compare(y.CurrentLine, x.CurrentLine);
         }//if
       }
     }
