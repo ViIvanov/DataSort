@@ -51,7 +51,7 @@ internal sealed class DataGeneration : IDisposable
     }//for
 
 #if DEBUG
-    // Write end-text marker to check correctnes of writing and reading data
+    // Write end-text marker to check correctness of writing and reading data
     destination[charactersWritten++] = DataDescription.LastTextCharacter;
 #endif // DEBUG
 

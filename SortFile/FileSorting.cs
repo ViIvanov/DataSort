@@ -129,7 +129,7 @@ internal sealed class FileSorting
       // Hope, it can reduce movements of items in the list.
       items.Sort(MergeFileItem.ReverseComparer);
 
-      var outputFileLength = GetFileLength(SourceFilePath); // Pre-allocate space for output file.
+      var outputFileLength = GetFileLength(SourceFilePath); // Preallocate space for output file.
       var outputFileName = FileNameGeneration.GetNewFilePath();
       var writeBufferSize = Configuration.MergeFileWriteBufferSizeMiB * 1024 * 1024;
       await using var saving = new FileSaving(outputFileName, MaxLineBufferSizeInBytes, Encoding, writeBufferSize, requiredLength: outputFileLength);

@@ -14,7 +14,7 @@ public static class DataDescription
   public const char TextSeparatorSecondCharacter = ' '; // Space
   public const int TextSeparatorLength = 2; // ". ": Dot and Space
 
-  // Limining the Text part
+  // Limiting the Text part
 #if DEBUG
   public const int TextMinLength = 4;
   public const int TextMaxLength = 16;

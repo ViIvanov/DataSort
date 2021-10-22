@@ -90,7 +90,7 @@ internal static class App
 #if DEBUG
         Debug.Assert(data.Span[^1] is DataDescription.LastTextCharacter, $"Latest character is not \"{DataDescription.LastTextCharacter}\"", $"Data is {data}");
         Debug.Assert(data.Span.IndexOf(DataDescription.LastTextCharacter) is var index && index == data.Span.Length - 1,
-          $"{nameof(DataDescription.LastTextCharacter)} should be latest character in the string, but occured at index {index}.", $"Data is {data}");
+          $"{nameof(DataDescription.LastTextCharacter)} should be latest character in the string, but occurred at index {index}.", $"Data is {data}");
 #endif // DEBUG
 
         bytesWritten += await saving.WriteDataAsync(data).ConfigureAwait(continueOnCapturedContext: false);
