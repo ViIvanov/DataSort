@@ -8,9 +8,11 @@ namespace DataSort.Common;
 public sealed class AppBuilder : IDisposable
 {
   public AppBuilder(Type appType, string[] args) {
+    ArgumentNullException.ThrowIfNull(appType);
+
     Configuration = GetConfiguration(args);
     LogFactory = CreateLoggerFactory(Configuration);
-    Logger = LogFactory.CreateLogger(appType ?? throw new ArgumentNullException(nameof(appType)));
+    Logger = LogFactory.CreateLogger(appType);
   }
 
   public IConfiguration Configuration { get; }

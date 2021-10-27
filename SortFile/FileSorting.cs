@@ -9,9 +9,7 @@ using Common;
 internal sealed class FileSorting
 {
   public FileSorting(SortFileOptions configuration) {
-    if(configuration is null) {
-      throw new ArgumentNullException(nameof(configuration));
-    }//if
+    ArgumentNullException.ThrowIfNull(configuration);
 
     Configuration = configuration.File;
     SourceFilePath = configuration.FilePath;

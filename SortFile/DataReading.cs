@@ -10,11 +10,10 @@ using Common;
 internal sealed class DataReading : IDisposable, IAsyncDisposable
 {
   public DataReading(string fileName, Encoding encoding, SortFileConfigurationOptions configuration) {
-    if(configuration is null) {
-      throw new ArgumentNullException(nameof(configuration));
-    }//if
+    ArgumentNullException.ThrowIfNull(encoding);
+    ArgumentNullException.ThrowIfNull(configuration);
 
-    Encoding = encoding ?? throw new ArgumentNullException(nameof(encoding));
+    Encoding = encoding;
 
     DelimeterCharacters = Environment.NewLine.ToCharArray();
     DelimeterBytes = Encoding.GetBytes(DelimeterCharacters);
