@@ -32,6 +32,9 @@ internal sealed class SortFileConfigurationOptions
   public int ReadingPipeMinimumReadSizeFactor { get; set; }
 
   [Range(0, Int32.MaxValue, ErrorMessage = SortFileOptions.MinValueVallidationErrorMessage)]
+  public int ReadingBufferCount { get; set; }
+
+  [Range(0, Int32.MaxValue, ErrorMessage = SortFileOptions.MinValueVallidationErrorMessage)]
   public int SavingFileBufferSizeKiB { get; set; }
 
   [Range(0, Int32.MaxValue, ErrorMessage = SortFileOptions.MinValueVallidationErrorMessage)]

@@ -68,21 +68,15 @@ internal sealed class FileSorting
     var currentLength = 0L;
 
     await using var reading = new DataReading(SourceFilePath, Encoding, Configuration);
-    var savingTask = default(Task?);
+    var savingTasks = new List<Task>();
     await foreach(var lines in reading.ReadLinesAsync(SortChunkSize, cancellationToken).ConfigureAwait(continueOnCapturedContext: false)) {
-      await CompleteAndDisposeAsync(savingTask).ConfigureAwait(continueOnCapturedContext: false);
-
       // Will sort and save temporary file while read the next portion of data.
-      savingTask = Task.Run(() => SaveDataAsync(lines), cancellationToken);
+      savingTasks.Add(Task.Run(() => SaveDataAsync(lines), cancellationToken));
     }//for
 
-    await CompleteAndDisposeAsync(savingTask).ConfigureAwait(continueOnCapturedContext: false);
-
-    static async Task CompleteAndDisposeAsync(Task? task) {
-      if(task is not null) {
-        await task.ConfigureAwait(continueOnCapturedContext: false);
-      }//if
-    }
+    if(savingTasks.Any()) {
+      await Task.WhenAll(savingTasks).ConfigureAwait(continueOnCapturedContext: false);
+    }//if
 
     async Task SaveDataAsync(List< string> lines) {
       lines.Sort((left, right) => DataComparer.Compare(left, right));
@@ -94,9 +88,10 @@ internal sealed class FileSorting
         }//for
       }//using
 
+      Interlocked.Add(ref lineCount, lines.Count);
+      await reading.ReturnBufferAsync(lines, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+
       files.Add(filePath);
-      lineCount += lines.Count;
-      lines.Clear();
 
       var fileLength = GetFileLength(filePath);
       currentLength += fileLength;

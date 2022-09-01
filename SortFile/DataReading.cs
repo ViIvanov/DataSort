@@ -2,6 +2,7 @@
 using System.IO.Pipelines;
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Threading.Channels;
 
 namespace DataSort.SortFile;
 
@@ -17,6 +18,13 @@ internal sealed class DataReading : IDisposable, IAsyncDisposable
 
     DelimeterCharacters = Environment.NewLine.ToCharArray();
     DelimeterBytes = Encoding.GetBytes(DelimeterCharacters);
+
+    BufferCount = configuration.ReadingBufferCount > 0 ? configuration.ReadingBufferCount : Environment.ProcessorCount;
+    BufferChannel = Channel.CreateBounded<List<string>>(new BoundedChannelOptions(capacity: BufferCount) {
+      FullMode = BoundedChannelFullMode.Wait,
+      SingleReader = true,
+      SingleWriter = false,
+    });
 
     var streamBufferSize = configuration.ReadingStreamBufferSizeKiB * 1024;
     Stream = new(fileName, FileMode.Open, FileAccess.Read, FileShare.Read, streamBufferSize, FileOptions.SequentialScan | FileOptions.Asynchronous);
@@ -35,15 +43,34 @@ internal sealed class DataReading : IDisposable, IAsyncDisposable
   private FileStream Stream { get; }
   private PipeReader Reader { get; }
 
+  private int BufferCount { get; }
+  private Channel<List<string>> BufferChannel { get; }
+
+  private async Task InitializeBuffersAsync(int chunkSize, CancellationToken cancellationToken = default) {
+    for(var index = 0; index < BufferCount; index++) {
+      var value = new List<string>(capacity: chunkSize);
+      await BufferChannel.Writer.WriteAsync(value, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+    }//for
+  }
+
+  private ValueTask<List<string>> GetBufferAsync(CancellationToken cancellationToken = default) => BufferChannel.Reader.ReadAsync(cancellationToken);
+
+  public ValueTask ReturnBufferAsync(List<string> value, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(value);
+
+    value.Clear();
+    return BufferChannel.Writer.WriteAsync(value, cancellationToken);
+  }
+
   public async IAsyncEnumerable<List<string>> ReadLinesAsync(int chunkSize, [EnumeratorCancellation] CancellationToken cancellationToken = default) {
     if(chunkSize <= 0) {
       throw new ArgumentOutOfRangeException(nameof(chunkSize), chunkSize, "Value should be positive.");
     }//if
 
+    await InitializeBuffersAsync(chunkSize, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+
     var isFirstRead = true;
-    var list0 = new List<string>(capacity: chunkSize);
-    var list1 = new List<string>(capacity: chunkSize);
-    var currentList = list0;
+    var currentList = await GetBufferAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
     while(true) {
       var result = await Reader.ReadAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
 
@@ -60,8 +87,7 @@ internal sealed class DataReading : IDisposable, IAsyncDisposable
 
       if(currentList.Count >= chunkSize || result.IsCompleted && isEnd) {
         yield return currentList;
-        currentList = currentList == list0 ? list1 : list0;
-        currentList.Clear();
+        currentList = await GetBufferAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
       }//if
 
       if(result.IsCompleted && isEnd) {
