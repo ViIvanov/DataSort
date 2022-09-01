@@ -38,9 +38,11 @@ internal static class App
         Directory.CreateDirectory(options.File.WorkingDirectory);
       }//if
 
-      //Console.WriteLine($"Sort file \"{Path.GetFileName(options.FilePath)}\" in directory \"{options.File.WorkingDirectory}\".");
-      //Console.WriteLine($"Start memory monitor for process #{Environment.ProcessId} and press <Enter>");
-      //Console.ReadLine();
+      Console.WriteLine($"Sort file \"{Path.GetFileName(options.FilePath)}\" in directory \"{options.File.WorkingDirectory}\".");
+      if(!Debugger.IsAttached) {
+        Console.Write($"Start memory monitor for process #{Environment.ProcessId} and press <Enter>");
+        Console.ReadLine();
+      }//if
 
       var stopwatch = Stopwatch.StartNew();
 
