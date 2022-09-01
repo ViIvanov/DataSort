@@ -51,13 +51,13 @@ internal static class App
 
     var validationResults = new List<ValidationResult>();
 
-    if(!Validator.TryValidateObject(options, new ValidationContext(options), validationResults, validateAllProperties: true)) {
+    if(!Validator.TryValidateObject(options, new(options), validationResults, validateAllProperties: true)) {
       builder.ReportErrors("Command Line", validationResults);
       return InvalidArgsExitCode;
-    } else if(!Validator.TryValidateObject(options.GenerationChannel, new ValidationContext(options.GenerationChannel), validationResults, validateAllProperties: true)) {
+    } else if(!Validator.TryValidateObject(options.GenerationChannel, new(options.GenerationChannel), validationResults, validateAllProperties: true)) {
       builder.ReportErrors(nameof(options.GenerationChannel), validationResults);
       return InvalidConfigurationExitCode;
-    } else if(!Validator.TryValidateObject(options.FileSaving, new ValidationContext(options.FileSaving), validationResults, validateAllProperties: true)) {
+    } else if(!Validator.TryValidateObject(options.FileSaving, new(options.FileSaving), validationResults, validateAllProperties: true)) {
       builder.ReportErrors(nameof(options.FileSaving), validationResults);
       return InvalidConfigurationExitCode;
     }//if

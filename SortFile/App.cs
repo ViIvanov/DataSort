@@ -64,10 +64,10 @@ internal static class App
 
     var validationResults = new List<ValidationResult>();
 
-    if(!Validator.TryValidateObject(options, new ValidationContext(options), validationResults, validateAllProperties: true)) {
+    if(!Validator.TryValidateObject(options, new(options), validationResults, validateAllProperties: true)) {
       builder.ReportErrors("Command Line", validationResults);
       return InvalidArgsExitCode;
-    } else if(!Validator.TryValidateObject(options.File, new ValidationContext(options.File), validationResults, validateAllProperties: true)) {
+    } else if(!Validator.TryValidateObject(options.File, new(options.File), validationResults, validateAllProperties: true)) {
       builder.ReportErrors(nameof(options.File), validationResults);
       return InvalidConfigurationExitCode;
     }//if

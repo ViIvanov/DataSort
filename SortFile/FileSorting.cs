@@ -31,10 +31,7 @@ internal sealed class FileSorting
   private static long GetFileLength(string filePath) => new FileInfo(filePath).Length;
 
   public async Task<string> SortFileAsync(CancellationToken cancellationToken = default) {
-    var deleteFilesChannel = Channel.CreateUnbounded<string>(new UnboundedChannelOptions {
-      SingleReader = true,
-      SingleWriter = false,
-    });
+    var deleteFilesChannel = Channel.CreateUnbounded<string>(new() { SingleReader = true, SingleWriter = false, });
 
     var deleteFilesTask = Task.Run(async () => {
       await foreach(var filePath in deleteFilesChannel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false)) {
@@ -175,8 +172,8 @@ internal sealed class FileSorting
       FilePath = filePath;
 
       try {
-        Stream = new FileStream(FilePath, FileMode.Open, FileAccess.Read, FileShare.None, bufferSize, FileOptions.SequentialScan | FileOptions.Asynchronous);
-        Reader = new StreamReader(Stream, encoding);
+        Stream = new(FilePath, FileMode.Open, FileAccess.Read, FileShare.None, bufferSize, FileOptions.SequentialScan | FileOptions.Asynchronous);
+        Reader = new(Stream, encoding);
       } catch {
         Dispose();
         throw;

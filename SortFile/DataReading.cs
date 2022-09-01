@@ -19,7 +19,7 @@ internal sealed class DataReading : IDisposable, IAsyncDisposable
     DelimeterBytes = Encoding.GetBytes(DelimeterCharacters);
 
     var streamBufferSize = configuration.ReadingStreamBufferSizeMiB * 1024 * 1024;
-    Stream = new FileStream(fileName, FileMode.Open, FileAccess.Read, FileShare.Read, streamBufferSize, FileOptions.SequentialScan | FileOptions.Asynchronous);
+    Stream = new(fileName, FileMode.Open, FileAccess.Read, FileShare.Read, streamBufferSize, FileOptions.SequentialScan | FileOptions.Asynchronous);
 
     var maxRowBytes = Encoding.GetByteCount(DataDescription.MaxString);
     var bufferSize = configuration.ReadingPipeBufferSizeFactor * maxRowBytes;

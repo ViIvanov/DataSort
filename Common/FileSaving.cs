@@ -15,7 +15,7 @@ public sealed class FileSaving : IDisposable, IAsyncDisposable
     Encoding = encoding;
     NewLineBytes = Encoding.GetBytes(Environment.NewLine);
     Buffer = ArrayPool<byte>.Shared.Rent(maxBufferSize);
-    Stream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.Read, streamBufferSize ?? DefaultStreamBufferSize, FileOptions.Asynchronous);
+    Stream = new(filePath, FileMode.Create, FileAccess.Write, FileShare.Read, streamBufferSize ?? DefaultStreamBufferSize, FileOptions.Asynchronous);
 
     if(requiredLength is not null) {
       try {

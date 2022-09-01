@@ -18,7 +18,7 @@ internal sealed class FileNameGeneration
     var directoryPath = String.IsNullOrEmpty(workingDirectory) ? Path.GetDirectoryName(sourceFilePath) : workingDirectory;
     var sourceFileName = Path.GetFileNameWithoutExtension(sourceFilePath);
     var extension = Path.GetExtension(sourceFilePath);
-    return new FileNameGeneration(directoryPath ?? String.Empty, sourceFileName, extension);
+    return new(directoryPath ?? String.Empty, sourceFileName, extension);
   }
 
   public string GetNewFilePath() {

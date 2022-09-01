@@ -4,7 +4,7 @@ using Common;
 
 internal sealed class DataComparer : Comparer<ReadOnlyMemory<char>>
 {
-  public static new DataComparer Default { get; } = new DataComparer();
+  public static new DataComparer Default { get; } = new();
 
   public override int Compare(ReadOnlyMemory<char> x, ReadOnlyMemory<char> y) => Compare(x.Span, y.Span);
 
