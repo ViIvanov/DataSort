@@ -33,7 +33,7 @@ internal sealed class FileSorting
   public async Task<string> SortFileAsync(CancellationToken cancellationToken = default) {
     var deleteFilesChannel = Channel.CreateUnbounded<string>(new() { SingleReader = true, SingleWriter = false, });
 
-    var deleteFilesTask = Task.Run(async () => {
+    using var deleteFilesTask = Task.Run(async () => {
       await foreach(var filePath in deleteFilesChannel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false)) {
         try {
           File.Delete(filePath);
@@ -70,17 +70,20 @@ internal sealed class FileSorting
     await using var reading = new DataReading(SourceFilePath, Encoding, Configuration);
     var savingTask = default(Task?);
     await foreach(var lines in reading.ReadLinesAsync(SortChunkSize, cancellationToken).ConfigureAwait(continueOnCapturedContext: false)) {
-      if(savingTask is not null) {
-        await savingTask.ConfigureAwait(continueOnCapturedContext: false);
-      }//if
+      await CompleteAndDisposeAsync(savingTask).ConfigureAwait(continueOnCapturedContext: false);
 
       // Will sort and save temporary file while read the next portion of data.
       savingTask = Task.Run(() => SaveDataAsync(lines), cancellationToken);
     }//for
 
-    if(savingTask is not null) {
-      await savingTask.ConfigureAwait(continueOnCapturedContext: false);
-    }//if
+    await CompleteAndDisposeAsync(savingTask).ConfigureAwait(continueOnCapturedContext: false);
+
+    static async Task CompleteAndDisposeAsync(Task? task) {
+      if(task is not null) {
+        await task.ConfigureAwait(continueOnCapturedContext: false);
+        task.Dispose();
+      }//if
+    }
 
     async Task SaveDataAsync(List< string> lines) {
       lines.Sort((left, right) => DataComparer.Compare(left, right));
