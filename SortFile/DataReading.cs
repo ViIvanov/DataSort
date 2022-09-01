@@ -58,7 +58,7 @@ internal sealed class DataReading : IDisposable, IAsyncDisposable
 
       var (position, isEnd) = ReadLines(result.Buffer, result.IsCompleted, currentList);
 
-      if(currentList.Count == currentList.Capacity || result.IsCompleted && isEnd) {
+      if(currentList.Count >= chunkSize || result.IsCompleted && isEnd) {
         yield return currentList;
         currentList = currentList == list0 ? list1 : list0;
         currentList.Clear();
@@ -84,6 +84,7 @@ internal sealed class DataReading : IDisposable, IAsyncDisposable
         var parts = value.Split(DelimeterCharacters, StringSplitOptions.RemoveEmptyEntries);
         items.AddRange(parts);
         reader.AdvanceToEnd();
+        break;
       } else {
         break;
       }//if
