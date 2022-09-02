@@ -112,20 +112,15 @@ internal sealed class FileSorting
     ArgumentNullException.ThrowIfNull(files);
     ArgumentNullException.ThrowIfNull(deleteFilesChannelWriter);
 
-    var items = new List<MergeFileItem>(files.Count);
+    var queue = new PriorityQueue<MergeFileItem, MergeFileItem>(initialCapacity: files.Count, MergeFileItem.Comparer);
     try {
       var bufferSize = Configuration.MergeFileReadBufferSizeMiB * 1024 * 1024;
       foreach(var filePath in files) {
         var item = await MergeFileItem.OpenAsync(filePath, Encoding, bufferSize).ConfigureAwait(continueOnCapturedContext: false);
         if(item is not null) {
-          items.Add(item);
+          queue.Enqueue(item, item);
         }//if
       }//for
-
-      // Sorting items in reversed order, to have minimal (first) item at the tail of the list.
-      // After that, the last item will be removed instead of first item.
-      // Hope, it can reduce movements of items in the list.
-      items.Sort(MergeFileItem.ReverseComparer);
 
       var outputFileLength = GetFileLength(SourceFilePath); // Preallocate space for output file.
       var outputFileName = FileNameGeneration.GetNewFilePath();
@@ -133,16 +128,12 @@ internal sealed class FileSorting
       await using var saving = new FileSaving(outputFileName, MaxLineBufferSizeInBytes, Encoding, writeBufferSize, requiredLength: outputFileLength);
 
       var (currentLength, progress) = (0L, 0);
-      while(items.Count > 0) {
-        var lastItemIndex = items.Count - 1;
-        var item = items[lastItemIndex];
-        items.RemoveAt(lastItemIndex);
+      while(queue.TryDequeue(out var item, out _)) {
         currentLength += await saving.WriteDataAsync(item.CurrentLine.AsMemory(), cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
         PrintProgress(currentLength, outputFileLength, ref progress);
 
         if(await item.ReadNext().ConfigureAwait(continueOnCapturedContext: false)) {
-          var index = items.BinarySearch(item, MergeFileItem.ReverseComparer);
-          items.Insert(index: index >= 0 ? index : ~index, item);
+          queue.Enqueue(item, item);
         } else {
           await item.DisposeAsync().ConfigureAwait(continueOnCapturedContext: false);
           await deleteFilesChannelWriter.WriteAsync(item.FilePath, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
@@ -151,7 +142,7 @@ internal sealed class FileSorting
 
       return outputFileName;
     } finally {
-      foreach(var item in items) {
+      foreach(var (item, _) in queue.UnorderedItems) {
         await item.DisposeAsync().ConfigureAwait(continueOnCapturedContext: false);
       }//for
     }//try
@@ -183,6 +174,7 @@ internal sealed class FileSorting
       }//try
     }
 
+    public static Comparer<MergeFileItem> Comparer { get; } = new MergeFileItemComparer();
     public static Comparer<MergeFileItem> ReverseComparer { get; } = new MergeFileItemReverseComparer();
 
     public string? CurrentLine { get; private set; }
@@ -231,6 +223,19 @@ internal sealed class FileSorting
           return -1;
         } else {
           return DataComparer.Compare(y.CurrentLine, x.CurrentLine);
+        }//if
+      }
+    }
+
+    private sealed class MergeFileItemComparer : Comparer<MergeFileItem>
+    {
+      public override int Compare(MergeFileItem? x, MergeFileItem? y) {
+        if(x is null) {
+          return y is null ? 0 : -1;
+        } else if(y is null) {
+          return 1;
+        } else {
+          return DataComparer.Compare(x.CurrentLine, y.CurrentLine);
         }//if
       }
     }
