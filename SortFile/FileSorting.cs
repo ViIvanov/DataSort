@@ -33,7 +33,7 @@ internal sealed class FileSorting
   public async Task<string> SortFileAsync(CancellationToken cancellationToken = default) {
     var deleteFilesChannel = Channel.CreateUnbounded<string>(new() { SingleReader = true, SingleWriter = false, });
 
-    using var deleteFilesTask = Task.Run(async () => {
+    var deleteFilesTask = Task.Run(async () => {
       await foreach(var filePath in deleteFilesChannel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false)) {
         try {
           File.Delete(filePath);
@@ -81,7 +81,6 @@ internal sealed class FileSorting
     static async Task CompleteAndDisposeAsync(Task? task) {
       if(task is not null) {
         await task.ConfigureAwait(continueOnCapturedContext: false);
-        task.Dispose();
       }//if
     }
 
