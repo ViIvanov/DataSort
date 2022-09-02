@@ -112,13 +112,13 @@ internal sealed class FileSorting
     ArgumentNullException.ThrowIfNull(files);
     ArgumentNullException.ThrowIfNull(deleteFilesChannelWriter);
 
-    var queue = new PriorityQueue<MergeFileItem, MergeFileItem>(initialCapacity: files.Count, MergeFileItem.Comparer);
+    var queue = new PriorityQueue<MergeFileItem, ReadOnlyMemory<char>>(initialCapacity: files.Count, DataComparer.Default);
     try {
       var bufferSize = Configuration.MergeFileReadBufferSizeMiB * 1024 * 1024;
       foreach(var filePath in files) {
-        var item = await MergeFileItem.OpenAsync(filePath, Encoding, bufferSize).ConfigureAwait(continueOnCapturedContext: false);
+        var (item, line) = await MergeFileItem.OpenAsync(filePath, Encoding, bufferSize).ConfigureAwait(continueOnCapturedContext: false);
         if(item is not null) {
-          queue.Enqueue(item, item);
+          queue.Enqueue(item, line.AsMemory());
         }//if
       }//for
 
@@ -128,12 +128,12 @@ internal sealed class FileSorting
       await using var saving = new FileSaving(outputFileName, MaxLineBufferSizeInBytes, Encoding, writeBufferSize, requiredLength: outputFileLength);
 
       var (currentLength, progress) = (0L, 0);
-      while(queue.TryDequeue(out var item, out _)) {
-        currentLength += await saving.WriteDataAsync(item.CurrentLine.AsMemory(), cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+      while(queue.TryDequeue(out var item, out var buffer)) {
+        currentLength += await saving.WriteDataAsync(buffer, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
         PrintProgress(currentLength, outputFileLength, ref progress);
 
-        if(await item.ReadNext().ConfigureAwait(continueOnCapturedContext: false)) {
-          queue.Enqueue(item, item);
+        if(await item.ReadLineAsync().ConfigureAwait(continueOnCapturedContext: false) is not null and var line) {
+          queue.Enqueue(item, line.AsMemory());
         } else {
           await item.DisposeAsync().ConfigureAwait(continueOnCapturedContext: false);
           await deleteFilesChannelWriter.WriteAsync(item.FilePath, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
@@ -174,25 +174,19 @@ internal sealed class FileSorting
       }//try
     }
 
-    public static Comparer<MergeFileItem> Comparer { get; } = new MergeFileItemComparer();
-    public static Comparer<MergeFileItem> ReverseComparer { get; } = new MergeFileItemReverseComparer();
-
-    public string? CurrentLine { get; private set; }
-
     public string FilePath { get; }
 
     private FileStream Stream { get; }
     private StreamReader Reader { get; }
 
-    public static async Task<MergeFileItem?> OpenAsync(string filePath, Encoding encoding, int bufferSize) {
+    public static async Task<(MergeFileItem? Item, string? Line)> OpenAsync(string filePath, Encoding encoding, int bufferSize) {
       var item = new MergeFileItem(filePath, encoding, bufferSize);
       try {
-        var hasValue = await item.ReadNext().ConfigureAwait(continueOnCapturedContext: false);
-        if(!hasValue) {
-          await item.DisposeAsync().ConfigureAwait(continueOnCapturedContext: false);
-          return null;
+        if(await item.ReadLineAsync().ConfigureAwait(continueOnCapturedContext: false) is not null and var line) {
+          return (item, line);
         } else {
-          return item;
+          await item.DisposeAsync().ConfigureAwait(continueOnCapturedContext: false);
+          return default;
         }//if
       } catch {
         await item.DisposeAsync().ConfigureAwait(continueOnCapturedContext: false);
@@ -200,9 +194,9 @@ internal sealed class FileSorting
       }//try
     }
 
-    public override string ToString() => $"[{Path.GetFileNameWithoutExtension(FilePath)}]: {CurrentLine}";
+    public override string ToString() => $"Path = \"{Path.GetFileNameWithoutExtension(FilePath)}\"";
 
-    public async Task<bool> ReadNext() => (CurrentLine = await Reader.ReadLineAsync().ConfigureAwait(continueOnCapturedContext: false)) is not null;
+    public Task<string?> ReadLineAsync() => Reader.ReadLineAsync();
 
     public ValueTask DisposeAsync() {
       Reader?.Dispose();
@@ -212,32 +206,6 @@ internal sealed class FileSorting
     public void Dispose() {
       Reader?.Dispose();
       Stream?.Dispose();
-    }
-
-    private sealed class MergeFileItemReverseComparer : Comparer<MergeFileItem>
-    {
-      public override int Compare(MergeFileItem? x, MergeFileItem? y) {
-        if(x is null) {
-          return y is null ? 0 : 1;
-        } else if(y is null) {
-          return -1;
-        } else {
-          return DataComparer.Compare(y.CurrentLine, x.CurrentLine);
-        }//if
-      }
-    }
-
-    private sealed class MergeFileItemComparer : Comparer<MergeFileItem>
-    {
-      public override int Compare(MergeFileItem? x, MergeFileItem? y) {
-        if(x is null) {
-          return y is null ? 0 : -1;
-        } else if(y is null) {
-          return 1;
-        } else {
-          return DataComparer.Compare(x.CurrentLine, y.CurrentLine);
-        }//if
-      }
     }
   }
 }
