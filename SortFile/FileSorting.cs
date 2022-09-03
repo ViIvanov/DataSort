@@ -106,11 +106,11 @@ internal sealed class FileSorting
     ArgumentNullException.ThrowIfNull(files);
     ArgumentNullException.ThrowIfNull(deleteFilesChannelWriter);
 
-    var queue = new PriorityQueue<MergeFileItem, ReadOnlyMemory<char>>(initialCapacity: files.Count, DataComparer.Default);
+    var queue = new PriorityQueue<MergeFileReading, ReadOnlyMemory<char>>(initialCapacity: files.Count, DataComparer.Default);
     try {
       var bufferSize = Configuration.MergeFileReadBufferSizeKiB * 1024;
       foreach(var filePath in files) {
-        var (item, line) = await MergeFileItem.OpenAsync(filePath, Encoding, bufferSize).ConfigureAwait(continueOnCapturedContext: false);
+        var (item, line) = await MergeFileReading.OpenAsync(filePath, Encoding, bufferSize).ConfigureAwait(continueOnCapturedContext: false);
         if(item is not null) {
           queue.Enqueue(item, line.AsMemory());
         }//if
@@ -154,14 +154,14 @@ internal sealed class FileSorting
     }
   }
 
-  private sealed class MergeFileItem : IDisposable, IAsyncDisposable
+  private sealed class MergeFileReading : IDisposable, IAsyncDisposable
   {
-    private MergeFileItem(string filePath, Encoding encoding, int bufferSize) {
+    private MergeFileReading(string filePath, Encoding encoding, int bufferSize) {
       FilePath = filePath;
 
       try {
         Stream = new(FilePath, FileMode.Open, FileAccess.Read, FileShare.None, bufferSize, FileOptions.SequentialScan | FileOptions.Asynchronous);
-        Reader = new(Stream, encoding);
+        Reader = new(Stream, encoding, bufferSize: bufferSize, leaveOpen: true);
       } catch {
         Dispose();
         throw;
@@ -173,8 +173,8 @@ internal sealed class FileSorting
     private FileStream Stream { get; }
     private StreamReader Reader { get; }
 
-    public static async Task<(MergeFileItem? Item, string? Line)> OpenAsync(string filePath, Encoding encoding, int bufferSize) {
-      var item = new MergeFileItem(filePath, encoding, bufferSize);
+    public static async Task<(MergeFileReading? Item, string? Line)> OpenAsync(string filePath, Encoding encoding, int bufferSize) {
+      var item = new MergeFileReading(filePath, encoding, bufferSize);
       try {
         if(await item.ReadLineAsync().ConfigureAwait(continueOnCapturedContext: false) is not null and var line) {
           return (item, line);
