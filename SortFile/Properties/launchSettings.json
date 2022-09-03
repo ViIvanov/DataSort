@@ -1,24 +1,20 @@
 {
   "profiles": {
-    "Release, SSD, 1G": {
+    "Debug, SSD, 100 MiB": {
       "commandName": "Project",
-      "commandLineArgs": "--FilePath \"d:\\Develop\\DataSort\\DataSort-1G-Release.txt\" --MaxReadLines 500000"
+      "commandLineArgs": "--FilePath \"$(SolutionDir)Results\\DataSort-100M-Debug.txt\" --MaxReadLines 100000"
     },
-    "Release, SSD, 10G": {
+    "Debug, SSD, 1 GiB": {
       "commandName": "Project",
-      "commandLineArgs": "--FilePath \"d:\\Develop\\DataSort\\DataSort-10G-Release.txt\" --MaxReadLines 500000"
+      "commandLineArgs": "--FilePath \"$(SolutionDir)Results\\DataSort-1G-Debug.txt\" --MaxReadLines 100000"
     },
-    "Debug, HDD, 1G": {
+    "Release, SSD, 1 GiB": {
       "commandName": "Project",
-      "commandLineArgs": "--FilePath \"z:\\Develop\\DataSort\\DataSort-1G-Debug.txt\" --MaxReadLines 10000000"
+      "commandLineArgs": "--FilePath \"$(SolutionDir)Results\\DataSort-1G.txt\" --MaxReadLines 100000"
     },
-    "Debug, HDD, 100G": {
+    "Release, SSD, 10 GiB": {
       "commandName": "Project",
-      "commandLineArgs": "--FilePath \"z:\\Develop\\DataSort\\DataSort-100G-Debug.txt\" --MaxReadLines 10000000"
-    },
-    "Debug, SSD, 100M": {
-      "commandName": "Project",
-      "commandLineArgs": "--FilePath \"d:\\Develop\\DataSort\\DataSort-100M-Debug.txt\" --MaxReadLines 1200000"
+      "commandLineArgs": "--FilePath \"$(SolutionDir)Results\\DataSort-10G.txt\" --MaxReadLines 100000"
     }
   }
 }

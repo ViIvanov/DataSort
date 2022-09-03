@@ -1,32 +1,12 @@
 {
   "profiles": {
-    "SSD, 1 GiB": {
+    "SSD, 100 MiB": {
       "commandName": "Project",
-      "commandLineArgs": "--FilePath \"d:\\Develop\\DataSort\\DataSort-1G.txt\" --RequiredLengthGiB 1"
+      "commandLineArgs": "--FilePath \"$(SolutionDir)Results\\DataSort-100M-Debug.txt\" --RequiredLengthGiB 0.1"
     },
-    "SSD, 10 GiB": {
-      "commandName": "Project",
-      "commandLineArgs": "--FilePath \"d:\\Develop\\DataSort\\DataSort-10G.txt\" --RequiredLengthGiB 10"
-    },
-    "HDD, 1 GiB": {
-      "commandName": "Project",
-      "commandLineArgs": "--FilePath \"z:\\Develop\\DataSort\\DataSort-1G.txt\" --RequiredLengthGiB 1"
-    },
-    "HDD 10 GiB": {
-      "commandName": "Project",
-      "commandLineArgs": "--FilePath \"z:\\Develop\\DataSort\\DataSort-10G.txt\" --RequiredLengthGiB 10"
-    },
-    "HDD 100 GiB": {
-      "commandName": "Project",
-      "commandLineArgs": "--FilePath \"z:\\Develop\\DataSort\\DataSort-100G.txt\" --RequiredLengthGiB 100"
-    },
-    "With Errors": {
-      "commandName": "Project",
-      "commandLineArgs": "--FilePath \"\" --RequiredLengthGiB -4"
-    },
-    "SSD, 100MiB": {
-      "commandName": "Project",
-      "commandLineArgs": "--FilePath \"d:\\Develop\\DataSort\\DataSort-100M.txt\" --RequiredLengthGiB 0.1"
+    "WSL": {
+      "commandName": "WSL2",
+      "distributionName": ""
     }
   }
 }
