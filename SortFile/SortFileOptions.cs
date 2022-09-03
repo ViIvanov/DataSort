@@ -19,9 +19,6 @@ internal sealed class SortFileConfigurationOptions
 {
   public string WorkingDirectory { get; set; } = String.Empty;
 
-  [Required, Range(0, Int32.MaxValue, ErrorMessage = SortFileOptions.MinValueVallidationErrorMessage)]
-  public int ConcurrentMerges { get; set; } = Environment.ProcessorCount;
-
   [Required]
   public string EncodingName { get; set; } = String.Empty;
 
