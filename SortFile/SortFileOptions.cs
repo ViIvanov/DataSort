@@ -23,7 +23,7 @@ internal sealed class SortFileConfigurationOptions
   public string EncodingName { get; set; } = String.Empty;
 
   [Range(0, Int32.MaxValue, ErrorMessage = SortFileOptions.MinValueVallidationErrorMessage)]
-  public int ReadingStreamBufferSizeMiB { get; set; }
+  public int ReadingStreamBufferSizeKiB { get; set; }
 
   [Range(1, Int32.MaxValue, ErrorMessage = SortFileOptions.MinValueVallidationErrorMessage)]
   public int ReadingPipeBufferSizeFactor { get; set; }
@@ -32,11 +32,11 @@ internal sealed class SortFileConfigurationOptions
   public int ReadingPipeMinimumReadSizeFactor { get; set; }
 
   [Range(0, Int32.MaxValue, ErrorMessage = SortFileOptions.MinValueVallidationErrorMessage)]
-  public int SavingFileBufferSizeMiB { get; set; }
+  public int SavingFileBufferSizeKiB { get; set; }
 
   [Range(0, Int32.MaxValue, ErrorMessage = SortFileOptions.MinValueVallidationErrorMessage)]
-  public int MergeFileReadBufferSizeMiB { get; set; }
+  public int MergeFileReadBufferSizeKiB { get; set; }
 
   [Range(0, Int32.MaxValue, ErrorMessage = SortFileOptions.MinValueVallidationErrorMessage)]
-  public int MergeFileWriteBufferSizeMiB { get; set; }
+  public int MergeFileWriteBufferSizeKiB { get; set; }
 }

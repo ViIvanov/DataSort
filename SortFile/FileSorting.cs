@@ -88,7 +88,7 @@ internal sealed class FileSorting
       lines.Sort((left, right) => DataComparer.Compare(left, right));
 
       var filePath = FileNameGeneration.GetNewFilePath();
-      await using(var saving = new FileSaving(filePath, MaxLineBufferSizeInBytes, Encoding, streamBufferSize: Configuration.SavingFileBufferSizeMiB * 1024 * 1024)) {
+      await using(var saving = new FileSaving(filePath, MaxLineBufferSizeInBytes, Encoding, streamBufferSize: Configuration.SavingFileBufferSizeKiB * 1024)) {
         foreach(var line in lines) {
           await saving.WriteDataAsync(line.AsMemory(), cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
         }//for
@@ -113,7 +113,7 @@ internal sealed class FileSorting
 
     var items = new List<MergeFileItem>(files.Count);
     try {
-      var bufferSize = Configuration.MergeFileReadBufferSizeMiB * 1024 * 1024;
+      var bufferSize = Configuration.MergeFileReadBufferSizeKiB * 1024;
       foreach(var filePath in files) {
         var item = await MergeFileItem.OpenAsync(filePath, Encoding, bufferSize).ConfigureAwait(continueOnCapturedContext: false);
         if(item is not null) {
@@ -128,7 +128,7 @@ internal sealed class FileSorting
 
       var outputFileLength = GetFileLength(SourceFilePath); // Preallocate space for output file.
       var outputFileName = FileNameGeneration.GetNewFilePath();
-      var writeBufferSize = Configuration.MergeFileWriteBufferSizeMiB * 1024 * 1024;
+      var writeBufferSize = Configuration.MergeFileWriteBufferSizeKiB * 1024;
       await using var saving = new FileSaving(outputFileName, MaxLineBufferSizeInBytes, Encoding, writeBufferSize, requiredLength: outputFileLength);
 
       var (currentLength, progress) = (0L, 0);
