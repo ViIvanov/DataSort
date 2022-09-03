@@ -4,6 +4,8 @@ using Common;
 
 internal sealed class DataComparer : Comparer<ReadOnlyMemory<char>>
 {
+  private const StringComparison StringComparison = System.StringComparison.Ordinal;
+
   public static new DataComparer Default { get; } = new();
 
   public override int Compare(ReadOnlyMemory<char> x, ReadOnlyMemory<char> y) => Compare(x.Span, y.Span);
@@ -11,7 +13,7 @@ internal sealed class DataComparer : Comparer<ReadOnlyMemory<char>>
   public static int Compare(ReadOnlySpan<char> x, ReadOnlySpan<char> y) {
     var xtext = GetText(x, out var xdelimeter);
     var ytext = GetText(y, out var ydelimeter);
-    var compareText = xtext.CompareTo(ytext, StringComparison.Ordinal);
+    var compareText = xtext.CompareTo(ytext, StringComparison);
     if(compareText is not 0) {
       return compareText;
     }//if
@@ -21,7 +23,7 @@ internal sealed class DataComparer : Comparer<ReadOnlyMemory<char>>
   }
 
   private static ReadOnlySpan<char> GetText(ReadOnlySpan<char> value, out int delimeter) {
-    delimeter = value.IndexOf(DataDescription.TextSeparator, StringComparison.Ordinal);
+    delimeter = value.IndexOf(DataDescription.TextSeparator, StringComparison);
     if(delimeter <= 0) {
       throw new ArgumentException($"Number separator \"{DataDescription.TextSeparator}\" not found in \"{value}\".", nameof(value));
     }//if
