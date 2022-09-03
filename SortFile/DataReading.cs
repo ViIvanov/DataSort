@@ -19,6 +19,13 @@ internal sealed class DataReading : IDisposable, IAsyncDisposable
     DelimeterCharacters = Environment.NewLine.ToCharArray();
     DelimeterBytes = Encoding.GetBytes(DelimeterCharacters);
 
+    BufferCount = configuration.ReadingBufferCount > 0 ? configuration.ReadingBufferCount : Environment.ProcessorCount;
+    BufferChannel = Channel.CreateBounded<List<string>>(new BoundedChannelOptions(capacity: BufferCount) {
+      FullMode = BoundedChannelFullMode.Wait,
+      SingleReader = true,
+      SingleWriter = false,
+    });
+
     var streamBufferSize = configuration.ReadingStreamBufferSizeKiB * 1024;
     Stream = new(fileName, FileMode.Open, FileAccess.Read, FileShare.Read, streamBufferSize, FileOptions.SequentialScan | FileOptions.Asynchronous);
 
@@ -36,14 +43,11 @@ internal sealed class DataReading : IDisposable, IAsyncDisposable
   private FileStream Stream { get; }
   private PipeReader Reader { get; }
 
-  private Channel<List<string>> BufferChannel { get; } = Channel.CreateBounded<List<string>>(new BoundedChannelOptions(capacity: Environment.ProcessorCount) {
-    FullMode = BoundedChannelFullMode.Wait,
-    SingleReader = true,
-    SingleWriter = false,
-  });
+  private int BufferCount { get; }
+  private Channel<List<string>> BufferChannel { get; }
 
   private async Task InitializeBuffersAsync(int chunkSize, CancellationToken cancellationToken = default) {
-    for(var index = 0; index < Environment.ProcessorCount; index++) {
+    for(var index = 0; index < BufferCount; index++) {
       var value = new List<string>(capacity: chunkSize);
       await BufferChannel.Writer.WriteAsync(value, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
     }//for
