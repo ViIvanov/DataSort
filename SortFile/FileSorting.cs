@@ -112,7 +112,7 @@ internal sealed class FileSorting
     try {
       var bufferSize = Configuration.MergeFileReadBufferSizeKiB * 1024;
       foreach(var filePath in files) {
-        var item = await MergeFileItem.OpenAsync(filePath, Encoding, bufferSize).ConfigureAwait(continueOnCapturedContext: false);
+        var item = await MergeFileItem.OpenAsync(filePath, Encoding, bufferSize, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
         if(item is not null) {
           items.Add(item);
         }//if
@@ -136,7 +136,7 @@ internal sealed class FileSorting
         currentLength += await saving.WriteDataAsync(item.CurrentLine.AsMemory(), cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
         PrintProgress(currentLength, outputFileLength, ref progress);
 
-        if(await item.ReadNext().ConfigureAwait(continueOnCapturedContext: false)) {
+        if(await item.ReadNextAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false)) {
           var index = items.BinarySearch(item, MergeFileItem.ReverseComparer);
           items.Insert(index: index >= 0 ? index : ~index, item);
         } else {
@@ -171,8 +171,8 @@ internal sealed class FileSorting
       FilePath = filePath;
 
       try {
-        Stream = new(FilePath, FileMode.Open, FileAccess.Read, FileShare.None, bufferSize, FileOptions.SequentialScan | FileOptions.Asynchronous);
-        Reader = new(Stream, encoding);
+        Stream = new(FilePath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize, FileOptions.SequentialScan | FileOptions.Asynchronous);
+        Reader = new(Stream, encoding, leaveOpen: true);
       } catch {
         Dispose();
         throw;
@@ -188,10 +188,10 @@ internal sealed class FileSorting
     private FileStream Stream { get; }
     private StreamReader Reader { get; }
 
-    public static async Task<MergeFileItem?> OpenAsync(string filePath, Encoding encoding, int bufferSize) {
+    public static async Task<MergeFileItem?> OpenAsync(string filePath, Encoding encoding, int bufferSize, CancellationToken cancellationToken = default) {
       var item = new MergeFileItem(filePath, encoding, bufferSize);
       try {
-        var hasValue = await item.ReadNext().ConfigureAwait(continueOnCapturedContext: false);
+        var hasValue = await item.ReadNextAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
         if(!hasValue) {
           await item.DisposeAsync().ConfigureAwait(continueOnCapturedContext: false);
           return null;
@@ -206,7 +206,7 @@ internal sealed class FileSorting
 
     public override string ToString() => $"[{Path.GetFileNameWithoutExtension(FilePath)}]: {CurrentLine}";
 
-    public async Task<bool> ReadNext() => (CurrentLine = await Reader.ReadLineAsync().ConfigureAwait(continueOnCapturedContext: false)) is not null;
+    public async Task<bool> ReadNextAsync(CancellationToken cancellationToken = default) => (CurrentLine = await Reader.ReadLineAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false)) is not null;
 
     public ValueTask DisposeAsync() {
       Reader?.Dispose();
