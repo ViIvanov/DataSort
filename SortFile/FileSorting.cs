@@ -72,9 +72,11 @@ internal sealed class FileSorting
     await foreach(var lines in reading.ReadLinesAsync(SortChunkSize, cancellationToken).ConfigureAwait(continueOnCapturedContext: false)) {
       // Will sort and save temporary file while read the next portion of data.
       savingTasks.Add(Task.Run(() => SaveDataAsync(lines), cancellationToken));
+      savingTasks.RemoveAll(item => item.IsCompleted);
     }//for
 
     if(savingTasks.Any()) {
+      savingTasks.RemoveAll(item => item.IsCompleted);
       await Task.WhenAll(savingTasks).ConfigureAwait(continueOnCapturedContext: false);
     }//if
 
