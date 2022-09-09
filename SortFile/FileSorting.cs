@@ -152,7 +152,7 @@ internal sealed class FileSorting
       }//for
     }//try
 
-    static bool PrintProgress(long currentValue, long maxValue, ref int progress) {
+    bool PrintProgress(long currentValue, long maxValue, ref int progress) {
       var currentProgress = currentValue < maxValue ? (int)((double)currentValue / maxValue * 100) : 100;
       if(currentProgress > progress) {
         var text = currentProgress % 10 is 0 ? $"{currentProgress,3}%{Environment.NewLine}" : ".";
