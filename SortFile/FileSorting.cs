@@ -80,7 +80,7 @@ internal sealed class FileSorting
       await Task.WhenAll(savingTasks).ConfigureAwait(continueOnCapturedContext: false);
     }//if
 
-    async Task SaveDataAsync(List< string> lines) {
+    async Task SaveDataAsync(List<string> lines) {
       lines.Sort((left, right) => DataComparer.Compare(left, right));
 
       var filePath = FileNameGeneration.GetNewFilePath();
