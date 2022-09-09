@@ -4,6 +4,8 @@ using System.Threading.Channels;
 
 namespace DataSort.SortFile;
 
+using System.Collections.Concurrent;
+
 using Common;
 
 internal sealed class FileSorting
@@ -111,12 +113,18 @@ internal sealed class FileSorting
     var items = new List<MergeFileItem>(files.Count);
     try {
       var bufferSize = Configuration.MergeFileReadBufferSizeKiB * 1024;
-      foreach(var filePath in files) {
+
+      var stopwatchOpenFiles = Stopwatch.StartNew();
+      var bag = new ConcurrentBag<MergeFileItem>();
+      await Parallel.ForEachAsync(files, cancellationToken, async (filePath, ct) => {
         var item = await MergeFileItem.OpenAsync(filePath, Encoding, bufferSize, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
         if(item is not null) {
-          items.Add(item);
+          bag.Add(item);
         }//if
-      }//for
+      }).ConfigureAwait(continueOnCapturedContext: false);
+      items.AddRange(bag);
+      stopwatchOpenFiles.Stop();
+      Console.WriteLine($"Open {items.Count:N0} files in {stopwatchOpenFiles.Elapsed}");
 
       // Sorting items in reversed order, to have minimal (first) item at the tail of the list.
       // After that, the last item will be removed instead of first item.
