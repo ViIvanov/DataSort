@@ -136,22 +136,61 @@ internal sealed class FileSorting
       var writeBufferSize = Configuration.MergeFileWriteBufferSizeKiB * 1024;
       await using var saving = new FileSaving(outputFileName, MaxLineBufferSizeInBytes, Encoding, writeBufferSize, requiredLength: outputFileLength);
 
+      var stopwatchWriteStart = new Stopwatch();
+      var stopwatchWriteAwait = new Stopwatch();
+      var stopwatchFetchNext = new Stopwatch();
+      var stopwatchSearchInsert = new Stopwatch();
+
+      var writeDataTask = default(Task<long>);
       var (currentLength, progress) = (0L, 0);
       while(items.Count > 0) {
+        await WriteDataAsync().ConfigureAwait(continueOnCapturedContext: false);
+
         var lastItemIndex = items.Count - 1;
         var item = items[lastItemIndex];
         items.RemoveAt(lastItemIndex);
-        currentLength += await saving.WriteDataAsync(item.CurrentLine.AsMemory(), cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
-        PrintProgress(currentLength, outputFileLength, ref progress);
 
-        if(await item.ReadNextAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false)) {
+        stopwatchWriteStart.Start();
+        var currentLine = item.CurrentLine.AsMemory();
+        writeDataTask = Task.Run(() => saving.WriteDataAsync(currentLine, cancellationToken), cancellationToken);
+        stopwatchWriteStart.Stop();
+
+        stopwatchFetchNext.Start();
+        var found = await item.ReadNextAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+        stopwatchFetchNext.Stop();
+        if(found) {
+          stopwatchSearchInsert.Start();
           var index = items.BinarySearch(item, MergeFileItem.ReverseComparer);
           items.Insert(index: index >= 0 ? index : ~index, item);
+          stopwatchSearchInsert.Stop();
         } else {
+          await WriteDataAsync().ConfigureAwait(continueOnCapturedContext: false);
           await item.DisposeAsync().ConfigureAwait(continueOnCapturedContext: false);
           await deleteFilesChannelWriter.WriteAsync(item.FilePath, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
         }//if
       }//while
+
+      await WriteDataAsync().ConfigureAwait(continueOnCapturedContext: false);
+
+      async Task WriteDataAsync() {
+        if(writeDataTask is not null) {
+          stopwatchWriteAwait.Start();
+          currentLength += await writeDataTask.ConfigureAwait(continueOnCapturedContext: false);
+          stopwatchWriteAwait.Stop();
+          if(PrintProgress(currentLength, outputFileLength, ref progress)) {
+            //RunGC(stopwatchGC);
+          }//if
+          writeDataTask = null;
+        }//if
+      }
+
+      //await saving.WriteDataAsync(Environment.NewLine.AsMemory(), cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+
+      Console.WriteLine($"Write Start takes {stopwatchWriteStart.Elapsed}");
+      Console.WriteLine($"Write Await takes {stopwatchWriteAwait.Elapsed}");
+      Console.WriteLine($"Fetch next takes {stopwatchFetchNext.Elapsed}");
+      Console.WriteLine($"Search/Insert takes {stopwatchSearchInsert.Elapsed}");
+      //Console.WriteLine($"GC takes {stopwatchGC.Elapsed}");
 
       return outputFileName;
     } finally {
