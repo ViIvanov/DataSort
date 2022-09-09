@@ -79,6 +79,7 @@ internal static class App
     var generation = new DataGenerationChannel(options.GenerationChannel.Capacity, options.GenerationChannel.ConcurrentGenerators);
     await using var saving = new FileSaving(options.FilePath, maxBufferSize, encoding, streamBufferSize, requiredLength);
     var bytesWritten = 0L;
+    var lineCount = 0;
 
     // Save some data to add into file sometimes, to be able handle the case with sorting the same data
     var (savedData, savedDataLength) = (ArrayPool<char>.Shared.Rent(maxBufferSize), 0);
@@ -94,10 +95,13 @@ internal static class App
 #endif // DEBUG
 
         bytesWritten += await saving.WriteDataAsync(data).ConfigureAwait(continueOnCapturedContext: false);
+        lineCount++;
+
         if(PrintProgress(bytesWritten, requiredLength, ref progress)) {
           // Add saved data to the file when progress value changed
           if(savedDataLength > 0) {
             bytesWritten += await saving.WriteDataAsync(savedData.AsMemory()[..savedDataLength]).ConfigureAwait(continueOnCapturedContext: false);
+            lineCount++;
           }//if
 
           data.CopyTo(savedData);
@@ -112,7 +116,7 @@ internal static class App
     await generation.CompleteAsync().ConfigureAwait(continueOnCapturedContext: false);
 
     stopwatch.Stop();
-    logger.LogInformation($"{bytesWritten:N0} bytes written in {stopwatch.Elapsed}.");
+    logger.LogInformation($"{bytesWritten:N0} bytes and {lineCount:N0} lines written to \"{options.FilePath}\" in {stopwatch.Elapsed}.");
   }
 
   private static bool PrintProgress(long currentValue, long maxValue, ref int progress) {
