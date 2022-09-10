@@ -138,7 +138,7 @@ internal sealed class FileSorting
 
       var stopwatchWriteStart = new Stopwatch();
       var stopwatchWriteAwait = new Stopwatch();
-      var stopwatchFetchNext = new Stopwatch();
+      var stopwatchReadNext = new Stopwatch();
       var stopwatchSearchInsert = new Stopwatch();
 
       var writeDataTask = default(Task<long>);
@@ -155,9 +155,9 @@ internal sealed class FileSorting
         writeDataTask = Task.Run(() => saving.WriteDataAsync(currentLine, cancellationToken), cancellationToken);
         stopwatchWriteStart.Stop();
 
-        stopwatchFetchNext.Start();
+        stopwatchReadNext.Start();
         var found = await item.ReadNextAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
-        stopwatchFetchNext.Stop();
+        stopwatchReadNext.Stop();
         if(found) {
           stopwatchSearchInsert.Start();
           var index = items.BinarySearch(item, MergeFileItem.ReverseComparer);
@@ -188,7 +188,7 @@ internal sealed class FileSorting
 
       Console.WriteLine($"Write Start takes {stopwatchWriteStart.Elapsed}");
       Console.WriteLine($"Write Await takes {stopwatchWriteAwait.Elapsed}");
-      Console.WriteLine($"Fetch next takes {stopwatchFetchNext.Elapsed}");
+      Console.WriteLine($"Read Next takes {stopwatchReadNext.Elapsed}");
       Console.WriteLine($"Search/Insert takes {stopwatchSearchInsert.Elapsed}");
       //Console.WriteLine($"GC takes {stopwatchGC.Elapsed}");
 
