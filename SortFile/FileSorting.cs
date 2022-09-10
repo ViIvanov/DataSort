@@ -110,21 +110,9 @@ internal sealed class FileSorting
     ArgumentNullException.ThrowIfNull(files);
     ArgumentNullException.ThrowIfNull(deleteFilesChannelWriter);
 
-    var items = new List<MergeFileItem>(files.Count);
+    var itemsBag = await OpenFilesAsync(files, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
     try {
-      var bufferSize = Configuration.MergeFileReadBufferSizeKiB * 1024;
-
-      var stopwatchOpenFiles = Stopwatch.StartNew();
-      var bag = new ConcurrentBag<MergeFileItem>();
-      await Parallel.ForEachAsync(files, cancellationToken, async (filePath, ct) => {
-        var item = await MergeFileItem.OpenAsync(filePath, Encoding, bufferSize, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
-        if(item is not null) {
-          bag.Add(item);
-        }//if
-      }).ConfigureAwait(continueOnCapturedContext: false);
-      items.AddRange(bag);
-      stopwatchOpenFiles.Stop();
-      Console.WriteLine($"Open {items.Count:N0} files in {stopwatchOpenFiles.Elapsed}");
+      var items = itemsBag.ToList();
 
       // Sorting items in reversed order, to have minimal (first) item at the tail of the list.
       // After that, the last item will be removed instead of first item.
@@ -194,10 +182,28 @@ internal sealed class FileSorting
 
       return outputFileName;
     } finally {
-      foreach(var item in items) {
+      foreach(var item in itemsBag) {
         await item.DisposeAsync().ConfigureAwait(continueOnCapturedContext: false);
       }//for
     }//try
+
+    async Task<IReadOnlyCollection<MergeFileItem>> OpenFilesAsync(IReadOnlyCollection<string> files, CancellationToken cancellationToken = default) {
+      var stopwatch = Stopwatch.StartNew();
+      var items = new ConcurrentBag<MergeFileItem>();
+
+      var bufferSize = Configuration.MergeFileReadBufferSizeKiB * 1024;
+      await Parallel.ForEachAsync(files, cancellationToken, async (filePath, token) => {
+        var item = await MergeFileItem.OpenAsync(filePath, Encoding, bufferSize, token).ConfigureAwait(continueOnCapturedContext: false);
+        if(item is not null) {
+          items.Add(item);
+          //RunGC(stopwatchGC);
+        }//if
+      }).ConfigureAwait(continueOnCapturedContext: false);
+
+      stopwatch.Stop();
+      Console.WriteLine($"Open {items.Count:N0} files in {stopwatch.Elapsed}");
+      return items;
+    }
 
     bool PrintProgress(long currentValue, long maxValue, ref int progress) {
       var currentProgress = currentValue < maxValue ? (int)((double)currentValue / maxValue * 100) : 100;
