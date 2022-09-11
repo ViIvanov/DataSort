@@ -9,10 +9,11 @@ public sealed class FileSaving : IDisposable, IAsyncDisposable
 
   private int isFirstLine = 0;
 
-  public FileSaving(string filePath, int maxBufferSize, Encoding encoding, int? streamBufferSize = null, long? requiredLength = null) {
+  public FileSaving(string filePath, int maxBufferSize, Encoding encoding, bool writeEncodingPreamble = false, int? streamBufferSize = null, long? requiredLength = null) {
     ArgumentNullException.ThrowIfNull(encoding);
 
     Encoding = encoding;
+    WriteEncodingPreamble = writeEncodingPreamble;
     NewLineBytes = Encoding.GetBytes(Environment.NewLine);
     Buffer = ArrayPool<byte>.Shared.Rent(maxBufferSize);
     Stream = new(filePath, FileMode.Create, FileAccess.Write, FileShare.Read, streamBufferSize ?? DefaultStreamBufferSize, FileOptions.Asynchronous);
@@ -28,16 +29,21 @@ public sealed class FileSaving : IDisposable, IAsyncDisposable
   }
 
   public Encoding Encoding { get; }
+  public bool WriteEncodingPreamble { get; }
   private byte[] NewLineBytes { get; }
   private byte[] Buffer { get; }
   private FileStream Stream { get; }
 
   private async Task<long> WritePreambleAsync(CancellationToken cancellationToken = default) {
-    var preamble = Encoding.GetPreamble();
-    if(preamble.Length > 0) {
-      await Stream.WriteAsync(preamble, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+    if(WriteEncodingPreamble) {
+      var preamble = Encoding.GetPreamble();
+      if(preamble.Length > 0) {
+        await Stream.WriteAsync(preamble, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+      }//if
+      return preamble.Length;
+    } else {
+      return 0;
     }//if
-    return preamble.Length;
   }
 
   public async Task<long> WriteNewLineAsync(CancellationToken cancellationToken = default) {
