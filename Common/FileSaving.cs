@@ -40,7 +40,7 @@ public sealed class FileSaving : IDisposable, IAsyncDisposable
     return preamble.Length;
   }
 
-  private async Task<long> WriteNewLineAsync(CancellationToken cancellationToken = default) {
+  public async Task<long> WriteNewLineAsync(CancellationToken cancellationToken = default) {
     await Stream.WriteAsync(NewLineBytes, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
     return NewLineBytes.Length;
   }
