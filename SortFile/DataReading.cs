@@ -85,14 +85,13 @@ internal sealed class DataReading : IDisposable, IAsyncDisposable
 
       var (position, isEnd) = ReadLines(result.Buffer, result.IsCompleted, currentList);
 
-      if(currentList.Count >= chunkSize || result.IsCompleted && isEnd) {
-        yield return currentList;
-        currentList = await GetBufferAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
-      }//if
-
       if(result.IsCompleted && isEnd) {
+        yield return currentList;
         await Reader.CompleteAsync().ConfigureAwait(continueOnCapturedContext: false);
         break;
+      } else if(currentList.Count >= chunkSize) {
+        yield return currentList;
+        currentList = await GetBufferAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
       }//if
 
       Reader.AdvanceTo(position, result.Buffer.End);
