@@ -46,6 +46,9 @@ internal sealed class DataReading : IDisposable, IAsyncDisposable
   private int BufferCount { get; }
   private Channel<List<string>> BufferChannel { get; }
 
+  public bool? HasEncodingPreamble { get; private set; }
+  public bool? HasFinalNewLine { get; private set; }
+
   private async Task InitializeBuffersAsync(int chunkSize, CancellationToken cancellationToken = default) {
     for(var index = 0; index < BufferCount; index++) {
       var value = new List<string>(capacity: chunkSize);
@@ -77,10 +80,20 @@ internal sealed class DataReading : IDisposable, IAsyncDisposable
       if(isFirstRead) {
         // Read encoding preamble, if required
         var (preamble, _) = ReadPreamble(result.Buffer, result.IsCompleted);
-        Reader.AdvanceTo(preamble, result.Buffer.End);
-        result = await Reader.ReadAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+        if(!preamble.Equals(default)) { // Has a preamble
+          Reader.AdvanceTo(preamble, result.Buffer.End);
+          result = await Reader.ReadAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+
+          HasEncodingPreamble = true;
+        } else {
+          HasEncodingPreamble = false;
+        }//if
 
         isFirstRead = false;
+      }//if
+
+      if(result.IsCompleted && HasFinalNewLine is null) {
+        HasFinalNewLine = result.Buffer.IsEmpty;
       }//if
 
       var (position, isEnd) = ReadLines(result.Buffer, result.IsCompleted, currentList);
