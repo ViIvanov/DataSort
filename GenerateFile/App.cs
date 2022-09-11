@@ -77,7 +77,7 @@ internal static class App
     var stopwatch = Stopwatch.StartNew();
 
     var generation = new DataGenerationChannel(options.GenerationChannel.Capacity, options.GenerationChannel.ConcurrentGenerators);
-    await using var saving = new FileSaving(options.FilePath, maxBufferSize, encoding, streamBufferSize, requiredLength);
+    await using var saving = new FileSaving(options.FilePath, maxBufferSize, encoding, options.FileSaving.WriteEncodingPreamble, streamBufferSize, requiredLength);
     var bytesWritten = 0L;
     var lineCount = 0;
 
@@ -108,6 +108,10 @@ internal static class App
           savedDataLength = data.Length;
         }//if
       }//while
+
+      if(options.FileSaving.WriteFinalNewLine) {
+        bytesWritten += await saving.WriteNewLineAsync().ConfigureAwait(continueOnCapturedContext: false);
+      }//if
     } finally {
       ArrayPool<char>.Shared.Return(savedData);
     }//try

@@ -32,4 +32,7 @@ internal sealed class FileSavingOptions
 
   [Range(0, Int32.MaxValue, ErrorMessage = GenerateFileOptions.MinValueVallidationErrorMessage)]
   public int StreamBufferSizeMiB { get; set; }
+
+  public bool WriteEncodingPreamble { get; set; }
+  public bool WriteFinalNewLine { get; set; }
 }
