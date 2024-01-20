@@ -51,12 +51,12 @@ public sealed class FileSaving : IDisposable, IAsyncDisposable
     return NewLineBytes.Length;
   }
 
-  private Task<long> WritePrefixAsync(ReadOnlyMemory<char> buffer, CancellationToken cancellationToken = default)
+  private Task<long> WritePrefixAsync(CancellationToken cancellationToken = default)
     => Interlocked.Exchange(ref isFirstLine, 1) is 0 ? WritePreambleAsync(cancellationToken) : WriteNewLineAsync(cancellationToken);
 
   public async Task<long> WriteDataAsync(ReadOnlyMemory<char> buffer, CancellationToken cancellationToken = default) {
     // Prefix is encoding preamble for first line or new line for other lines.
-    var prefixLengthInBytesLength = await WritePrefixAsync(buffer, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+    var prefixLengthInBytesLength = await WritePrefixAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
 
     var bufferLengthInBytes = Encoding.GetBytes(buffer.Span, Buffer);
     await Stream.WriteAsync(Buffer.AsMemory()[0..bufferLengthInBytes], cancellationToken).ConfigureAwait(continueOnCapturedContext: false);

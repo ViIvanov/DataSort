@@ -18,6 +18,8 @@ internal static class App
   private static void Usage() => Console.WriteLine($"Usage: {Path.GetFileNameWithoutExtension(Environment.ProcessPath)} --{nameof(SortFileOptions.FilePath)} \"<input file path>\" --{nameof(SortFileOptions.MaxReadLines)} <max read lines>");
 
   private static async Task<int> Main(string[] args) {
+    ThreadPool.SetMinThreads(workerThreads: 512, completionPortThreads: 512);
+
     using var builder = new AppBuilder(typeof(App), args);
 
     var validateOptionsResult = builder.GetOptions(out var options);
@@ -60,7 +62,7 @@ internal static class App
   }
 
   private static int GetOptions(this AppBuilder builder, out SortFileOptions options) {
-    options = builder.Configuration.Get<SortFileOptions>();
+    options = builder.Configuration.Get<SortFileOptions>() ?? new();
 
     var validationResults = new List<ValidationResult>();
 

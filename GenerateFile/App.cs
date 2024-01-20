@@ -47,7 +47,7 @@ internal static class App
   }
 
   private static int GetOptions(this AppBuilder builder, out GenerateFileOptions options) {
-    options = builder.Configuration.Get<GenerateFileOptions>();
+    options = builder.Configuration.Get<GenerateFileOptions>() ?? new();
 
     var validationResults = new List<ValidationResult>();
 

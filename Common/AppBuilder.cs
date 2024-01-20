@@ -19,7 +19,7 @@ public sealed class AppBuilder : IDisposable
   public ILoggerFactory LogFactory { get; }
   public ILogger Logger { get; }
 
-  private static ILoggerFactory CreateLoggerFactory(IConfiguration? configuration) => LoggerFactory.Create(builder =>
+  private static ILoggerFactory CreateLoggerFactory(IConfiguration configuration) => LoggerFactory.Create(builder =>
     builder
       .SetMinimumLevel(LogLevel.Trace)
       .AddConfiguration(configuration)

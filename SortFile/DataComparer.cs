@@ -4,32 +4,37 @@ using Common;
 
 internal sealed class DataComparer : Comparer<ReadOnlyMemory<char>>
 {
-  private const StringComparison StringComparison = System.StringComparison.Ordinal;
+  private const StringComparison StringComparisonValue = StringComparison.Ordinal;
 
   public static new DataComparer Default { get; } = new();
 
   public override int Compare(ReadOnlyMemory<char> x, ReadOnlyMemory<char> y) => Compare(x.Span, y.Span);
 
-  public static int Compare(ReadOnlySpan<char> x, ReadOnlySpan<char> y) {
-    var xtext = GetText(x, out var xdelimeter);
-    var ytext = GetText(y, out var ydelimeter);
-    var compareText = xtext.CompareTo(ytext, StringComparison);
+  public static int Compare(in ReadOnlySpan<char> x, in ReadOnlySpan<char> y) {
+    var (xindex, yindex) = (FindDelimiterIndex(x), FindDelimiterIndex(y));
+    return Compare(x, xindex, y, yindex);
+  }
+
+  public static int Compare(in ReadOnlySpan<char> x, int xDelimiterIndex, in ReadOnlySpan<char> y, int yDelimiterIndex) {
+    var xtext = GetText(x, xDelimiterIndex);
+    var ytext = GetText(y, yDelimiterIndex);
+    var compareText = xtext.CompareTo(ytext, StringComparisonValue);
     if(compareText is not 0) {
       return compareText;
     }//if
 
-    var (xnumber, ynumber) = (GetNumber(x, xdelimeter), GetNumber(y, ydelimeter));
+    var (xnumber, ynumber) = (GetNumber(x, xDelimiterIndex), GetNumber(y, yDelimiterIndex));
     return xnumber.CompareTo(ynumber);
   }
 
-  private static ReadOnlySpan<char> GetText(ReadOnlySpan<char> value, out int delimeter) {
-    delimeter = value.IndexOf(DataDescription.TextSeparator, StringComparison);
-    if(delimeter <= 0) {
+  public static int FindDelimiterIndex(in ReadOnlySpan<char> value) {
+    var index = value.IndexOf(DataDescription.TextSeparator, StringComparisonValue);
+    if(index <= 0) {
       throw new ArgumentException($"Number separator \"{DataDescription.TextSeparator}\" not found in \"{value}\".", nameof(value));
     }//if
-
-    return value[(delimeter + DataDescription.TextSeparator.Length)..];
+    return index;
   }
 
-  private static ulong GetNumber(ReadOnlySpan<char> value, int delimeter) => UInt64.Parse(value[..delimeter]);
+  private static ulong GetNumber(in ReadOnlySpan<char> value, int delimeter) => UInt64.Parse(value[..delimeter]);
+  private static ReadOnlySpan<char> GetText(in ReadOnlySpan<char> value, int delimeter) => value[(delimeter + DataDescription.TextSeparator.Length)..];
 }

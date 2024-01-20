@@ -2,9 +2,9 @@
 using System.Text;
 using System.Threading.Channels;
 
-namespace DataSort.SortFile;
-
 using System.Collections.Concurrent;
+
+namespace DataSort.SortFile;
 
 using Common;
 
@@ -47,14 +47,14 @@ internal sealed class FileSorting
     }, cancellationToken);
 
     var stopwatchSplit = Stopwatch.StartNew();
-    var (files, lineCount) = await SplitFileAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+    var (mergeOptions, lineCount) = await SplitFileAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
     stopwatchSplit.Stop();
-    Console.WriteLine($"Split to {files.Count:N0} files / {lineCount:N0} lines in {stopwatchSplit.Elapsed}");
+    Console.WriteLine($"Split to {mergeOptions.Files.Count:N0} files / {lineCount:N0} lines in {stopwatchSplit.Elapsed}");
 
     var stopwatchMerge = Stopwatch.StartNew();
-    var filePath = await MergeFilesAsync(files, deleteFilesChannel, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+    var filePath = await MergeFilesAsync(mergeOptions, deleteFilesChannel, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
     stopwatchMerge.Stop();
-    Console.WriteLine($"Merge {files.Count:N0} files in {stopwatchMerge.Elapsed}");
+    Console.WriteLine($"Merge {mergeOptions.Files.Count:N0} files in {stopwatchMerge.Elapsed}");
 
     deleteFilesChannel.Writer.Complete();
     await deleteFilesTask.ConfigureAwait(continueOnCapturedContext: false);
@@ -62,38 +62,63 @@ internal sealed class FileSorting
     return filePath;
   }
 
-  private async Task<(IReadOnlyList<string> Files, int LineCount)> SplitFileAsync(CancellationToken cancellationToken = default) {
+  private async Task<(MergeOptions Options, int LineCount)> SplitFileAsync(CancellationToken cancellationToken = default) {
     var files = new List<string>();
     var lineCount = 0;
 
     var sourceFileLength = GetFileLength(SourceFilePath);
     var currentLength = 0L;
 
+    var stopwatchReadLines = new Stopwatch();
+    using var stopwatchSort = new ThreadLocal<Stopwatch>(() => new Stopwatch(), trackAllValues: true);
+    using var stopwatchSaving = new ThreadLocal<Stopwatch>(() => new Stopwatch(), trackAllValues: true);
+    using var stopwatchReturnBuffer = new ThreadLocal<Stopwatch>(() => new Stopwatch(), trackAllValues: true);
+
     await using var reading = new DataReading(SourceFilePath, Encoding, Configuration);
     var savingTasks = new List<Task>();
-    await foreach(var lines in reading.ReadLinesAsync(SortChunkSize, cancellationToken).ConfigureAwait(continueOnCapturedContext: false)) {
-      // Will sort and save temporary file while read the next portion of data.
-      savingTasks.Add(Task.Run(() => SaveDataAsync(lines), cancellationToken));
-      savingTasks.RemoveAll(item => item.IsCompleted);
-    }//for
 
+    stopwatchReadLines.Start();
+    await foreach(var lines in reading.ReadLinesAsync(SortChunkSize, cancellationToken).ConfigureAwait(continueOnCapturedContext: false)) {
+      stopwatchReadLines.Stop();
+
+      // Will sort and save temporary file while read the next portion of data.
+      //savingTasks.Add(Task.Run(() => SaveDataAsync(lines, cancellationToken), cancellationToken));
+      savingTasks.Add(SaveDataAsync(lines, cancellationToken));
+      savingTasks.RemoveAll(item => item.IsCompleted);
+
+      stopwatchReadLines.Start();
+    }//for
+    stopwatchReadLines.Stop();
+
+    var stopwatchWaitTasks = new Stopwatch();
     if(savingTasks.Any()) {
       savingTasks.RemoveAll(item => item.IsCompleted);
+
+      stopwatchWaitTasks.Start();
       await Task.WhenAll(savingTasks).ConfigureAwait(continueOnCapturedContext: false);
+      stopwatchWaitTasks.Stop();
     }//if
 
-    async Task SaveDataAsync(List<string> lines) {
+    async Task SaveDataAsync(List<string> lines, CancellationToken cancellationToken = default) {
+      stopwatchSort.Start();
       lines.Sort((left, right) => DataComparer.Compare(left, right));
+      stopwatchSort.Stop();
 
       var filePath = FileNameGeneration.GetNewFilePath();
+      //var fileLength = 0;
+      stopwatchSaving.Start();
       await using(var saving = new FileSaving(filePath, MaxLineBufferSizeInBytes, Encoding, streamBufferSize: Configuration.SavingFileBufferSizeKiB * 1024)) {
         foreach(var line in lines) {
+          //fileLength += Encoding.GetByteCount(line);
           await saving.WriteDataAsync(line.AsMemory(), cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
         }//for
       }//using
+      stopwatchSaving.Stop();
 
       Interlocked.Add(ref lineCount, lines.Count);
+      stopwatchReturnBuffer.Start();
       await reading.ReturnBufferAsync(lines, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+      stopwatchReturnBuffer.Stop();
 
       files.Add(filePath);
 
@@ -103,16 +128,22 @@ internal sealed class FileSorting
       Console.WriteLine($"Saved [{currentProgress,3:N0}%] \"{Path.GetFileNameWithoutExtension(filePath)}\" [{fileLength:N0}].");
     }
 
-    return (files, lineCount);
+    Console.WriteLine($"Read lines:\t{stopwatchReadLines.Elapsed}");
+    Console.WriteLine($"Sort file:\t{stopwatchSort.Elapsed()} (avg: {new TimeSpan(stopwatchSort.ElapsedTicks() / files.Count)})");
+    Console.WriteLine($"Write data:\t{stopwatchSaving.Elapsed()} (avg: {new TimeSpan(stopwatchSaving.ElapsedTicks() / files.Count)})");
+    Console.WriteLine($"Return buffer:\t{stopwatchReturnBuffer.Elapsed()} (avg: {new TimeSpan(stopwatchReturnBuffer.ElapsedTicks() / files.Count)})");
+    Console.WriteLine($"Wait tasks:\t{stopwatchWaitTasks.Elapsed}");
+
+    return (new(files, reading.HasEncodingPreamble ?? false, reading.HasFinalNewLine ?? false), lineCount);
   }
 
-  private async Task<string> MergeFilesAsync(IReadOnlyCollection<string> files, ChannelWriter<string> deleteFilesChannelWriter, CancellationToken cancellationToken = default) {
-    ArgumentNullException.ThrowIfNull(files);
+  private async Task<string> MergeFilesAsync(MergeOptions mergeOptions, ChannelWriter<string> deleteFilesChannelWriter, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(deleteFilesChannelWriter);
 
-    var itemsBag = await OpenFilesAsync(files, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+    //var stopwatchGC = new Stopwatch();
+    var itemBag = await OpenFilesAsync(mergeOptions.Files, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
     try {
-      var items = itemsBag.ToList();
+      var items = itemBag.ToList();
 
       // Sorting items in reversed order, to have minimal (first) item at the tail of the list.
       // After that, the last item will be removed instead of first item.
@@ -122,25 +153,24 @@ internal sealed class FileSorting
       var outputFileLength = GetFileLength(SourceFilePath); // Preallocate space for output file.
       var outputFileName = FileNameGeneration.GetNewFilePath();
       var writeBufferSize = Configuration.MergeFileWriteBufferSizeKiB * 1024;
-      await using var saving = new FileSaving(outputFileName, MaxLineBufferSizeInBytes, Encoding, writeBufferSize, requiredLength: outputFileLength);
+      await using var saving = new FileSaving(outputFileName, MaxLineBufferSizeInBytes, Encoding, mergeOptions.WriteEncodingPreamble, requiredLength: outputFileLength);
 
       var stopwatchWriteStart = new Stopwatch();
       var stopwatchWriteAwait = new Stopwatch();
       var stopwatchReadNext = new Stopwatch();
       var stopwatchSearchInsert = new Stopwatch();
+      var stopwatchDelete = new Stopwatch();
 
-      var writeDataTask = default(Task<long>);
       var (currentLength, progress) = (0L, 0);
       while(items.Count > 0) {
-        await WriteDataAsync().ConfigureAwait(continueOnCapturedContext: false);
-
         var lastItemIndex = items.Count - 1;
         var item = items[lastItemIndex];
         items.RemoveAt(lastItemIndex);
 
         stopwatchWriteStart.Start();
         var currentLine = item.CurrentLine.AsMemory();
-        writeDataTask = Task.Run(() => saving.WriteDataAsync(currentLine, cancellationToken), cancellationToken);
+        //var writeDataTask = Task.Run(() => saving.WriteDataAsync(currentLine, cancellationToken), cancellationToken);
+        var writeDataTask = saving.WriteDataAsync(currentLine, cancellationToken);
         stopwatchWriteStart.Stop();
 
         stopwatchReadNext.Start();
@@ -151,41 +181,50 @@ internal sealed class FileSorting
           var index = items.BinarySearch(item, MergeFileItem.ReverseComparer);
           items.Insert(index: index >= 0 ? index : ~index, item);
           stopwatchSearchInsert.Stop();
+
+          await WriteDataAsync(writeDataTask).ConfigureAwait(continueOnCapturedContext: false);
         } else {
-          await WriteDataAsync().ConfigureAwait(continueOnCapturedContext: false);
+          await WriteDataAsync(writeDataTask).ConfigureAwait(continueOnCapturedContext: false);
+
           await item.DisposeAsync().ConfigureAwait(continueOnCapturedContext: false);
           await deleteFilesChannelWriter.WriteAsync(item.FilePath, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
         }//if
       }//while
 
-      await WriteDataAsync().ConfigureAwait(continueOnCapturedContext: false);
+      if(mergeOptions.WriteFinalNewLine) {
+        currentLength += await saving.WriteNewLineAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+        PrintProgress(currentLength, outputFileLength, ref progress);
+      }//if
 
-      async Task WriteDataAsync() {
-        if(writeDataTask is not null) {
-          stopwatchWriteAwait.Start();
-          currentLength += await writeDataTask.ConfigureAwait(continueOnCapturedContext: false);
-          stopwatchWriteAwait.Stop();
-          if(PrintProgress(currentLength, outputFileLength, ref progress)) {
-            //RunGC(stopwatchGC);
-          }//if
-          writeDataTask = null;
+      async Task WriteDataAsync(Task<long> task) {
+        stopwatchWriteAwait.Start();
+        currentLength += await task.ConfigureAwait(continueOnCapturedContext: false);
+        if(PrintProgress(currentLength, outputFileLength, ref progress)) {
+          //RunGC(stopwatchGC);
         }//if
+        stopwatchWriteAwait.Stop();
       }
 
-      //await saving.WriteDataAsync(Environment.NewLine.AsMemory(), cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
-
-      Console.WriteLine($"Write Start takes {stopwatchWriteStart.Elapsed}");
-      Console.WriteLine($"Write Await takes {stopwatchWriteAwait.Elapsed}");
-      Console.WriteLine($"Read Next takes {stopwatchReadNext.Elapsed}");
-      Console.WriteLine($"Search/Insert takes {stopwatchSearchInsert.Elapsed}");
-      //Console.WriteLine($"GC takes {stopwatchGC.Elapsed}");
+      Console.WriteLine($"Write Start:\t{stopwatchWriteStart.Elapsed}");
+      Console.WriteLine($"Write Await:\t{stopwatchWriteAwait.Elapsed}");
+      Console.WriteLine($"Read Next:\t{stopwatchReadNext.Elapsed}");
+      Console.WriteLine($"Search/Insert:\t{stopwatchSearchInsert.Elapsed}");
+      //Console.WriteLine($"GC takes:\t{stopwatchGC.Elapsed}");
 
       return outputFileName;
     } finally {
-      foreach(var item in itemsBag) {
+      foreach(var item in itemBag) {
         await item.DisposeAsync().ConfigureAwait(continueOnCapturedContext: false);
       }//for
     }//try
+
+    //static void RunGC(Stopwatch? stopwatch = default) {
+    //  stopwatch?.Start();
+    //  GC.Collect();
+    //  GC.WaitForPendingFinalizers();
+    //  GC.Collect();
+    //  stopwatch?.Stop();
+    //}
 
     async Task<IReadOnlyCollection<MergeFileItem>> OpenFilesAsync(IReadOnlyCollection<string> files, CancellationToken cancellationToken = default) {
       var stopwatch = Stopwatch.StartNew();
@@ -201,7 +240,7 @@ internal sealed class FileSorting
       }).ConfigureAwait(continueOnCapturedContext: false);
 
       stopwatch.Stop();
-      Console.WriteLine($"Open {items.Count:N0} files in {stopwatch.Elapsed}");
+      Console.WriteLine($"Open files:\t{stopwatch.Elapsed} ({items.Count:N0})");
       return items;
     }
 
@@ -216,6 +255,13 @@ internal sealed class FileSorting
         return false;
       }//if
     }
+  }
+
+  private readonly struct MergeOptions(IReadOnlyList<string> files, bool writeEncodingPreamble, bool writeFinalNewLine)
+  {
+    public IReadOnlyList<string> Files { get; } = files ?? [];
+    public bool WriteEncodingPreamble => writeEncodingPreamble;
+    public bool WriteFinalNewLine => writeFinalNewLine;
   }
 
   private sealed class MergeFileItem : IDisposable, IAsyncDisposable
@@ -234,6 +280,7 @@ internal sealed class FileSorting
 
     public static Comparer<MergeFileItem> ReverseComparer { get; } = new MergeFileItemReverseComparer();
 
+    private int TextDelimeterIndex { get; set; }
     public string? CurrentLine { get; private set; }
 
     public string FilePath { get; }
@@ -245,7 +292,7 @@ internal sealed class FileSorting
       var item = new MergeFileItem(filePath, encoding, bufferSize);
       try {
         var hasValue = await item.ReadNextAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
-        if(!hasValue) {
+        if(!hasValue /* || String.IsNullOrEmpty(item.CurrentLine) */) {
           await item.DisposeAsync().ConfigureAwait(continueOnCapturedContext: false);
           return null;
         } else {
@@ -259,7 +306,15 @@ internal sealed class FileSorting
 
     public override string ToString() => $"[{Path.GetFileNameWithoutExtension(FilePath)}]: {CurrentLine}";
 
-    public async Task<bool> ReadNextAsync(CancellationToken cancellationToken = default) => (CurrentLine = await Reader.ReadLineAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false)) is not null;
+    public async Task<bool> ReadNextAsync(CancellationToken cancellationToken = default) {
+      if((CurrentLine = await Reader.ReadLineAsync(cancellationToken).ConfigureAwait(continueOnCapturedContext: false)) is not null) {
+        TextDelimeterIndex = DataComparer.FindDelimiterIndex(CurrentLine.AsSpan());
+        return true;
+      } else {
+        TextDelimeterIndex = -1;
+        return false;
+      }//if
+    }
 
     public ValueTask DisposeAsync() {
       Reader?.Dispose();
@@ -279,7 +334,7 @@ internal sealed class FileSorting
         } else if(y is null) {
           return -1;
         } else {
-          return DataComparer.Compare(y.CurrentLine, x.CurrentLine);
+          return DataComparer.Compare(y.CurrentLine, y.TextDelimeterIndex, x.CurrentLine, x.TextDelimeterIndex);
         }//if
       }
     }

@@ -2,7 +2,7 @@
   "profiles": {
     "SSD, 100 MiB": {
       "commandName": "Project",
-      "commandLineArgs": "--FilePath \"$(SolutionDir)Results\\DataSort-100M-Debug.txt\" --RequiredLengthGiB 0.1"
+      "commandLineArgs": "--FilePath \"$(SolutionDir)Results\\DataSort-1M-Debug.txt\" --RequiredLengthGiB 0.001"
     },
     "WSL": {
       "commandName": "WSL2",

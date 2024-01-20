@@ -15,6 +15,10 @@
     "Release, SSD, 10 GiB": {
       "commandName": "Project",
       "commandLineArgs": "--FilePath \"$(SolutionDir)Results\\DataSort-10G.txt\" --MaxReadLines 100000"
+    },
+    "Debug, SSD, 1 MiB": {
+      "commandName": "Project",
+      "commandLineArgs": "--FilePath \"$(SolutionDir)Results\\DataSort-1M-Debug.txt\" --MaxReadLines 1000"
     }
   }
 }
